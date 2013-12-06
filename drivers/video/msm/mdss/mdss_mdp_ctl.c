@@ -1607,25 +1607,33 @@ void mdss_mdp_ctl_restore(struct mdss_mdp_ctl *ctl)
 		MDSS_MDP_REG_DISP_INTF_SEL);
 }
 
-static int mdss_mdp_ctl_start_sub(struct mdss_mdp_ctl *ctl)
+static int mdss_mdp_ctl_start_sub(struct mdss_mdp_ctl *ctl, bool handoff)
 {
 	struct mdss_mdp_mixer *mixer;
 	u32 outsize, temp;
 	int ret = 0;
 	int i, nmixers;
 
-	if (ctl->start_fnc)
-		ret = ctl->start_fnc(ctl);
-	else
-		pr_warn("no start function for ctl=%d type=%d\n", ctl->num,
-				ctl->panel_data->panel_info.type);
-
-	if (ret) {
-		pr_err("unable to start intf\n");
-		return ret;
-	}
-
 	pr_debug("ctl_num=%d\n", ctl->num);
+
+	/*
+	 * Need start_fnc in 2 cases:
+	 * (1) handoff
+	 * (2) continuous splash finished.
+	 */
+	if (handoff || !ctl->panel_data->panel_info.cont_splash_enabled) {
+		if (ctl->start_fnc)
+			ret = ctl->start_fnc(ctl);
+		else
+			pr_warn("no start function for ctl=%d type=%d\n",
+					ctl->num,
+					ctl->panel_data->panel_info.type);
+
+		if (ret) {
+			pr_err("unable to start intf\n");
+			return ret;
+		}
+	}
 
 	if (!ctl->panel_data->panel_info.cont_splash_enabled) {
 		nmixers = MDSS_MDP_INTF_MAX_LAYERMIXER +
@@ -1653,7 +1661,7 @@ static int mdss_mdp_ctl_start_sub(struct mdss_mdp_ctl *ctl)
 	return ret;
 }
 
-int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl)
+int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl, bool handoff)
 {
 	struct mdss_mdp_ctl *sctl;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
@@ -1667,7 +1675,6 @@ int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl)
 	ret = mdss_mdp_ctl_setup(ctl);
 	if (ret)
 		return ret;
-
 
 	sctl = mdss_mdp_get_split_ctl(ctl);
 
@@ -1690,10 +1697,10 @@ int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl)
 		goto error;
 	}
 
-	ret = mdss_mdp_ctl_start_sub(ctl);
+	ret = mdss_mdp_ctl_start_sub(ctl, handoff);
 	if (ret == 0) {
 		if (sctl) { /* split display is available */
-			ret = mdss_mdp_ctl_start_sub(sctl);
+			ret = mdss_mdp_ctl_start_sub(sctl, handoff);
 			if (!ret)
 				mdss_mdp_ctl_split_display_enable(1, ctl, sctl);
 		} else if (ctl->mixer_right) {
