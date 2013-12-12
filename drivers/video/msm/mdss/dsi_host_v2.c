@@ -1372,6 +1372,38 @@ static int dsi_get_panel_cfg(char *panel_cfg)
 	return rc;
 }
 
+static struct device_node *dsi_pref_prim_panel(
+		struct platform_device *pdev)
+{
+	struct device_node *dsi_pan_node = NULL;
+
+	pr_debug("%s:%d: Select primary panel from dt\n",
+					__func__, __LINE__);
+#if defined(CONFIG_MACH_MSM8X10_W5) || defined(CONFIG_MACH_MSM8X10_W65)
+	pr_debug("%s:%d: lcd id :lge_lcd_id : %d \n", __func__, __LINE__,lge_lcd_id);
+
+	if (lge_lcd_id == 0)//primary ID
+	{
+		pr_debug("%s:%d: Primary panel \n", __func__, __LINE__);
+		dsi_pan_node = of_parse_phandle(
+							pdev->dev.of_node, "qcom,dsi-pref-prim-pan", 0);
+	}
+	else //for safe secondary
+	{
+		pr_debug("%s:%d: Secondary panel \n", __func__, __LINE__);
+		dsi_pan_node = of_parse_phandle(
+							pdev->dev.of_node, "qcom,dsi-pref-secondary-pan", 0);
+	}
+#else //qct original
+	dsi_pan_node = of_parse_phandle(pdev->dev.of_node,
+					"qcom,dsi-pref-prim-pan", 0);
+#endif
+	if (!dsi_pan_node)
+		pr_err("%s:can't find panel phandle\n", __func__);
+
+	return dsi_pan_node;
+}
+
 /**
  * dsi_find_panel_of_node(): find device node of dsi panel
  * @pdev: platform_device of the dsi ctrl node
@@ -1401,32 +1433,8 @@ static struct device_node *dsi_find_panel_of_node(
 		/* no panel cfg chg, parse dt */
 		pr_debug("%s:%d: no cmd line cfg present\n",
 			 __func__, __LINE__);
-#if defined(CONFIG_MACH_MSM8X10_W5) || defined(CONFIG_MACH_MSM8X10_W65)
-		pr_debug("%s:%d: lcd id :lge_lcd_id : %d \n", __func__, __LINE__,lge_lcd_id);
 
-		if (lge_lcd_id == 0)//primary ID
-		{
-			pr_debug("%s:%d: Primary panel \n", __func__, __LINE__);
-			dsi_pan_node = of_parse_phandle(
-								pdev->dev.of_node, "qcom,dsi-pref-prim-pan", 0);
-		}
-		else //for safe secondary
-		{
-			pr_debug("%s:%d: Secondary panel \n", __func__, __LINE__);
-			dsi_pan_node = of_parse_phandle(
-								pdev->dev.of_node, "qcom,dsi-pref-secondary-pan", 0);
-		}
-#else 	//qct original
-		dsi_pan_node = of_parse_phandle(
-			pdev->dev.of_node,
-			"qcom,dsi-pref-prim-pan", 0);
-#endif
-
-		if (!dsi_pan_node) {
-			pr_err("%s:can't find panel phandle\n",
-			       __func__);
-			return NULL;
-		}
+		dsi_pan_node = dsi_pref_prim_panel(pdev);
 	} else {
 		if (panel_cfg[0] != '0') {
 			pr_err("%s:%d:ctrl id=[%d] not supported\n",
@@ -1454,7 +1462,7 @@ static struct device_node *dsi_find_panel_of_node(
 		if (!dsi_pan_node) {
 			pr_err("%s: invalid pan node\n",
 			       __func__);
-			return NULL;
+			dsi_pan_node = dsi_pref_prim_panel(pdev);
 		}
 	}
 	return dsi_pan_node;
