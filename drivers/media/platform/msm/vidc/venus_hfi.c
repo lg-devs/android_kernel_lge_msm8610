@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1663,7 +1663,7 @@ static int venus_hfi_get_q_size(struct venus_hfi_device *dev,
 
 	q_info = &dev->iface_queues[q_index];
 	if (!q_info) {
-		dprintk(VIDC_ERR, "cannot read shared Q's\n");
+		dprintk(VIDC_ERR, "cannot read shared Q's");
 		return -ENOENT;
 	}
 	queue = (struct hfi_queue_header *) q_info->q_hdr;
