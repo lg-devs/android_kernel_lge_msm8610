@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1112,10 +1112,6 @@ static int setup_event_queue(void *inst,
 	unsigned long flags;
 	struct msm_vidc_inst *vidc_inst = (struct msm_vidc_inst *)inst;
 
-	//watchdog patch, to protect spinlock acquirement between cpu0 and cpu1
-	spin_lock_irqsave(&pvdev->fh_lock, flags);
-	INIT_LIST_HEAD(&pvdev->fh_list);
-
 	v4l2_fh_init(&vidc_inst->event_handler, pvdev);
 	spin_unlock_irqrestore(&pvdev->fh_lock, flags);
 
@@ -1341,6 +1337,7 @@ int msm_vidc_close(void *instance)
 	if (!inst)
 		return -EINVAL;
 
+	v4l2_fh_del(&inst->event_handler);
 	list_for_each_safe(ptr, next, &inst->registered_bufs) {
 		bi = list_entry(ptr, struct buffer_info, list);
 		if (bi->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
