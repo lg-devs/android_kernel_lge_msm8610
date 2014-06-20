@@ -397,6 +397,9 @@ int lge_lvds_panel_power(struct mdss_panel_data *pdata, int enable);
 int tps61282_power(struct mdss_panel_data *pdata, int enable);
 #endif
 
+int mdss_dsi_register_recovery_handler(struct mdss_dsi_ctrl_pdata *ctrl,
+		struct mdss_panel_recovery *recovery);
+
 static inline bool mdss_dsi_broadcast_mode_enabled(void)
 {
 	return ctrl_list[DSI_CTRL_MASTER]->shared_pdata.broadcast_enable &&
