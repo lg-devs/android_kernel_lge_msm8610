@@ -692,6 +692,7 @@ static int mdss_fb_probe(struct platform_device *pdev)
 	mfd->bl_level_prev_scaled = 0;
 	mfd->bl_scale = 1024;
 	mfd->bl_min_lvl = 30;
+	mfd->ad_bl_level = 0;
 #if defined(CONFIG_FB_MSM_MIPI_TIANMA_CMD_HVGA_PT)
 	mfd->fb_imgType = MDP_RGB_565;
 #else
@@ -1014,10 +1015,9 @@ static void mdss_fb_scale_bl(struct msm_fb_data_type *mfd, u32 *bl_lvl)
 void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 {
 	struct mdss_panel_data *pdata;
-	int (*update_ad_input)(struct msm_fb_data_type *mfd);
-	u32 temp = bkl_lvl;
+	u32 temp = bkl_lvl, ad_bl;
 	int ret = -EINVAL;
-	bool is_bl_changed = (bkl_lvl != mfd->bl_level);
+	bool bl_notify_needed = false;
 
   #ifdef CONFIG_MACH_LGE
   if( force_set_bl_f || lge_get_boot_mode()== LGE_BOOT_MODE_QEM_130K
@@ -1045,16 +1045,24 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 	pdata = dev_get_platdata(&mfd->pdev->dev);
 
 	if ((pdata) && (pdata->set_backlight)) {
-		if (mfd->mdp.ad_attenuate_bl) {
-			ret = (*mfd->mdp.ad_attenuate_bl)(bkl_lvl, &temp, mfd);
-			if (ret)
-				pr_err("Failed to attenuate BL\n");
+		if (mfd->mdp.ad_calc_bl) {
+			if (mfd->ad_bl_level == 0)
+				mfd->ad_bl_level = temp;
+			ad_bl = mfd->ad_bl_level;
+			ret = (*mfd->mdp.ad_calc_bl)(mfd, temp, &temp, &ad_bl);
+			if ((!ret) && (mfd->ad_bl_level != ad_bl) &&
+					mfd->mdp.ad_invalidate_input) {
+				mfd->ad_bl_level = ad_bl;
+				(*mfd->mdp.ad_invalidate_input)(mfd);
+				bl_notify_needed = true;
+			}
 		}
 
 		mfd->bl_level_prev_scaled = mfd->bl_level_scaled;
 #if !defined(CONFIG_MACH_MSM8X10_W5)
 		if (!IS_CALIB_MODE_BL(mfd))
 			mdss_fb_scale_bl(mfd, &temp);
+#endif
 		/*
 		 * Even though backlight has been scaled, want to show that
 		 * backlight has been set to bkl_lvl to those that read from
@@ -1063,24 +1071,21 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 		 * as well as setting bl_level to bkl_lvl even though the
 		 * backlight has been set to the scaled value.
 		 */
+#if !defined(CONFIG_MACH_MSM8X10_W5)
 		if (mfd->bl_level_scaled == temp) {
 			mfd->bl_level = bkl_lvl;
-			return;
+		} else {
+#endif
+			pr_debug("backlight sent to panel :%d\n", temp);
+			pdata->set_backlight(pdata, temp);
+			mfd->bl_level = bkl_lvl;
+			mfd->bl_level_scaled = temp;
+			bl_notify_needed = true;
+#if !defined(CONFIG_MACH_MSM8X10_W5)
 		}
 #endif
-		pr_debug("backlight sent to panel :%d\n", temp);
-		pdata->set_backlight(pdata, temp);
-		mfd->bl_level = bkl_lvl;
-		mfd->bl_level_scaled = temp;
-
-		if (mfd->mdp.update_ad_input && is_bl_changed) {
-			update_ad_input = mfd->mdp.update_ad_input;
-			mutex_unlock(&mfd->bl_lock);
-			/* Will trigger ad_setup which will grab bl_lock */
-			update_ad_input(mfd);
-			mutex_lock(&mfd->bl_lock);
-		}
-		mdss_fb_bl_update_notify(mfd);
+		if (bl_notify_needed)
+			mdss_fb_bl_update_notify(mfd);
 	}
 }
 
@@ -1089,6 +1094,7 @@ void mdss_fb_update_backlight(struct msm_fb_data_type *mfd)
 	struct mdss_panel_data *pdata;
 	int ret = 0;
 	u32 temp;
+	u32 ad_bl;
 
 	mutex_lock(&mfd->bl_lock);
 	if (mfd->unset_bl_level && !mfd->bl_updated) {
@@ -1097,16 +1103,23 @@ void mdss_fb_update_backlight(struct msm_fb_data_type *mfd)
             mfd->bl_level = mfd->unset_bl_level;
 			pr_info("backlight on.bl_level=%d \n",mfd->bl_level); /*lge_changed*/
 			temp = mfd->bl_level;
-			if (mfd->mdp.ad_attenuate_bl) {
-				ret = (*mfd->mdp.ad_attenuate_bl)(temp,
-					&temp, mfd);
-				if (ret)
-					pr_err("Failed to attenuate BL\n");
-			}
+			if (mfd->mdp.ad_calc_bl) {
+				if (mfd->ad_bl_level == 0)
+					mfd->ad_bl_level = temp;
+				ad_bl = mfd->ad_bl_level;
+				ret = (*mfd->mdp.ad_calc_bl)(mfd, temp, &temp,
+						&ad_bl);
+				if ((!ret) && (mfd->ad_bl_level != ad_bl) &&
+						mfd->mdp.ad_invalidate_input) {
+					mfd->ad_bl_level = ad_bl;
+					(*mfd->mdp.ad_invalidate_input)(mfd);
+				}
 
+			}
 			pdata->set_backlight(pdata, temp);
 			mfd->bl_level_scaled = mfd->unset_bl_level;
 			mfd->bl_updated = 1;
+			mdss_fb_bl_update_notify(mfd);
 		}
 	}
 	mutex_unlock(&mfd->bl_lock);
