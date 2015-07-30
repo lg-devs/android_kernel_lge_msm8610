@@ -156,6 +156,7 @@ static struct mux_div_clk a7ssmux = {
 static struct clk_lookup clock_tbl_a7[] = {
 	CLK_LOOKUP("cpu0_clk",	a7ssmux.c, "0.qcom,msm-cpufreq"),
 	CLK_LOOKUP("cpu0_clk",	a7ssmux.c, "fe805664.qcom,pm-8x60"),
+	CLK_LOOKUP("cpu0_clk",	a7ssmux.c, "0.qcom,rq-stats"),
 };
 
 static int of_get_fmax_vdd_class(struct platform_device *pdev, struct clk *c,
@@ -193,7 +194,8 @@ static int of_get_fmax_vdd_class(struct platform_device *pdev, struct clk *c,
 	if (!c->fmax)
 		return -ENOMEM;
 
-	array = devm_kzalloc(&pdev->dev, prop_len * sizeof(u32), GFP_KERNEL);
+	array = devm_kzalloc(&pdev->dev,
+			prop_len * sizeof(u32) * 2, GFP_KERNEL);
 	if (!array)
 		return -ENOMEM;
 

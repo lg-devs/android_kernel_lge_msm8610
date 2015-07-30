@@ -564,10 +564,9 @@ static int get_args(uint32_t kernel, uint32_t sc, remote_arg_t *pra,
 		rpra[i].buf.len = pra[i].buf.len;
 		if (!rpra[i].buf.len)
 			continue;
-		if (list[i].num) {
-			rpra[i].buf.pv = pra[i].buf.pv;
-			continue;
-		} else if (me->smmu.enabled && fds && (fds[i] >= 0)) {
+		//if (fds)
+		//	pr_err("adsprpc: get_args i=%d, fd=%d, num=%d\n", i, fds[i], list[i].num);
+		if (me->smmu.enabled && fds && (fds[i] >= 0)) {
 			len = buf_page_size(pra[i].buf.len);
 			handles[i] = ion_import_dma_buf(me->iclient, fds[i]);
 			VERIFY(err, 0 == IS_ERR_OR_NULL(handles[i]));
@@ -582,6 +581,9 @@ static int get_args(uint32_t kernel, uint32_t sc, remote_arg_t *pra,
 			list[i].num = 1;
 			pages[list[i].pgidx].addr = iova;
 			pages[list[i].pgidx].size = len;
+			continue;
+		} else if (list[i].num) {
+			rpra[i].buf.pv = pra[i].buf.pv;
 			continue;
 		}
 		if (rlen < pra[i].buf.len) {

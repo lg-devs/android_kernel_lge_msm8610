@@ -28,7 +28,7 @@
 	aliases {
 		sdhc1 = &sdhc_1; /* SDC1 eMMC slot */
 		sdhc2 = &sdhc_2; /* SDC2 SD card slot */
-		spi4 = &spi_4;
+		/*spi4 = &spi_4;*/
 	};
 
 	soc: soc { };
@@ -459,16 +459,36 @@
 		compatible = "qcom,msm-watchdog";
 		reg = <0xf9017000 0x1000>;
 		interrupts = <0 3 0>, <0 4 0>;
-		qcom,bark-time = <11000>;
+		qcom,bark-time = <15000>;
 		qcom,pet-time = <10000>;
 		qcom,ipi-ping;
 	};
 
-	qcom,acpuclk@f9011050 {
-		compatible = "qcom,acpuclk-a7";
+	qcom,clock-a7@f9011050 {
+		compatible = "qcom,clock-a7-8226";
 		reg = <0xf9011050 0x8>;
-		reg-names = "rcg_base";
-		a7_cpu-supply = <&apc_vreg_corner>;
+		reg-names = "rcg-base";
+		clock-names = "clk-4", "clk-5";
+		qcom,speed0-bin-v0 =
+			<         0 0>,
+			< 384000000 1>,
+			< 787200000 2>,
+			<1190400000 3>;
+
+		cpu-vdd-supply = <&apc_vreg_corner>;
+	};
+
+	qcom,msm-cpufreq@0 {
+		reg = <0 4>;
+		compatible = "qcom,msm-cpufreq";
+		qcom,cpu-mem-ports = <1 512>;
+		qcom,cpufreq-table =
+			<  300000  800 >,
+			<  384000  800 >,
+			<  600000 1600 >,
+			<  787200 1600 >,
+			<  998400 2664 >,
+			< 1190400 2664 >;
 	};
 
 	spmi_bus: qcom,spmi@fc4c0000 {
@@ -562,7 +582,7 @@
                 qcom,master-id = <86>;
 	};
 
-	spi_4: spi@f9926000 { /* BLSP1 QUP4 */
+/*	spi_4: spi@f9926000 { BLSP1 QUP4
 		compatible = "qcom,spi-qup-v2";
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -584,7 +604,7 @@
 		qcom,bam-consumer-pipe-index = <18>;
 		qcom,bam-producer-pipe-index = <19>;
 		qcom,master-id = <86>;
-	};
+	}; */
 
 	qcom,pronto@fb21b000 {
 		compatible = "qcom,pil-pronto";
@@ -615,15 +635,16 @@
 		qcom,model = "msm8x10-snd-card";
 	};
 
-	qcom,msm-pcm {
-		compatible = "qcom,msm-pcm-dsp";
-		qcom,msm-pcm-dsp-id = <0>;
+	qti,msm-pcm {
+		compatible = "qti,msm-pcm-dsp";
+		qti,msm-pcm-dsp-id = <0>;
 	};
 
-	qcom,msm-pcm-low-latency {
-		compatible = "qcom,msm-pcm-dsp";
-		qcom,msm-pcm-dsp-id = <1>;
-		qcom,msm-pcm-low-latency;
+	qti,msm-pcm-low-latency {
+		compatible = "qti,msm-pcm-dsp";
+		qti,msm-pcm-dsp-id = <1>;
+		qti,msm-pcm-low-latency;
+		qti,latency-level = "ultra";
 	};
 
 	qcom,msm-pcm-routing {
@@ -1041,7 +1062,7 @@
 		label = "vchg_sns";
 		reg = <2>;
 		qcom,decimation = <0>;
-		qcom,pre-div-channel-scaling = <2>;
+		qcom,pre-div-channel-scaling = <5>;
 		qcom,calibration-type = "absolute";
 		qcom,scale-function = <0>;
 		qcom,hw-settle-time = <0>;

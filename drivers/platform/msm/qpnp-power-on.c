@@ -24,6 +24,13 @@
 #include <linux/log2.h>
 #include <linux/qpnp/power-on.h>
 
+#ifdef CONFIG_LGE_PM_PWR_KEY_FOR_CHG_LOGO
+#include <mach/board_lge.h>
+#endif
+#ifdef CONFIG_LGE_WIRELESS_CHARGER_RT9536
+#include <linux/power/rt9536_charger.h>
+#endif
+
 /* Common PNP defines */
 #define QPNP_PON_REVISION2(base)		(base + 0x01)
 
@@ -117,6 +124,10 @@ struct qpnp_pon {
 	int num_pon_config;
 	u16 base;
 	struct delayed_work bark_work;
+#ifdef CONFIG_LGE_WIRELESS_CHARGER_RT9536
+	struct power_supply *wireless;
+	struct work_struct cblpwr_interrupt_work;
+#endif
 };
 
 static struct qpnp_pon *sys_reset_dev;
@@ -136,6 +147,9 @@ static const char * const qpnp_pon_reason[] = {
 	[6] = "Triggered from CBL (external power supply)",
 	[7] = "Triggered from KPD (power key press)",
 };
+#ifdef CONFIG_LGE_WIRELESS_CHARGER_RT9536
+int qpnp_is_cblpwr_on(void);
+#endif
 
 static int
 qpnp_pon_masked_write(struct qpnp_pon *pon, u16 addr, u8 mask, u8 val)
@@ -315,6 +329,11 @@ qpnp_get_cfg(struct qpnp_pon *pon, u32 pon_type)
 	return NULL;
 }
 
+#ifdef CONFIG_LGE_PM_PWR_KEY_FOR_CHG_LOGO
+void qpnp_pwr_key_action_set_for_chg_logo(struct input_dev *dev, unsigned int code, int value);
+#endif
+
+
 static int
 qpnp_pon_input_dispatch(struct qpnp_pon *pon, u32 pon_type)
 {
@@ -355,12 +374,57 @@ qpnp_pon_input_dispatch(struct qpnp_pon *pon, u32 pon_type)
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_LGE_PM_PWR_KEY_FOR_CHG_LOGO
+    if(lge_get_boot_mode() == LGE_BOOT_MODE_CHARGERLOGO)
+    {
+        pr_info("=========== [CHG LOGO MODE] =========== Keycode : %d PON_RT_STS : %d PON_RT_BIT :%d \n",cfg->key_code,pon_rt_sts,pon_rt_bit);
+	    qpnp_pwr_key_action_set_for_chg_logo(pon->pon_input, cfg->key_code,
+					(pon_rt_sts & pon_rt_bit));
+    }
+	else
+	{
+	    input_report_key(pon->pon_input, cfg->key_code,
+					(pon_rt_sts & pon_rt_bit));
+	    input_sync(pon->pon_input);
+	}
+#else
 	input_report_key(pon->pon_input, cfg->key_code,
 					(pon_rt_sts & pon_rt_bit));
 	input_sync(pon->pon_input);
+#endif
 
 	return 0;
 }
+
+#ifdef CONFIG_LGE_WIRELESS_CHARGER_RT9536
+static void cblpwr_interrupt_worker(struct work_struct *work)
+{
+	struct qpnp_pon *pon =
+		container_of(work, struct qpnp_pon, cblpwr_interrupt_work); 
+	struct rt9536_chip *chip;
+	if(pon->wireless==NULL)
+		{
+			pon->wireless = power_supply_get_by_name("wireless");
+		}
+		if(pon->wireless!=NULL)
+		{
+			chip = container_of(pon->wireless, struct rt9536_chip, charger);
+		}	
+
+	if(qpnp_is_cblpwr_on())
+	{
+		schedule_work(&chip->wireless_set_online_work);
+		printk("[BIGLAKE] WIRELESS CHARGER IS INSERTED\n");
+	}
+	else
+	{
+		schedule_delayed_work(&chip->wireless_set_offline_work,
+	 	round_jiffies_relative(msecs_to_jiffies(1)));
+		printk("[BIGLAKE] WIRELESS CHARGER IS REMOVED\n");
+	}
+}
+#endif
+
 
 static irqreturn_t qpnp_kpdpwr_irq(int irq, void *_pon)
 {
@@ -401,6 +465,13 @@ static irqreturn_t qpnp_cblpwr_irq(int irq, void *_pon)
 	struct qpnp_pon *pon = _pon;
 
 	rc = qpnp_pon_input_dispatch(pon, PON_CBLPWR);
+#ifdef CONFIG_LGE_WIRELESS_CHARGER_RT9536
+	if(&pon->cblpwr_interrupt_work!=NULL)
+		schedule_work(&pon->cblpwr_interrupt_work);
+#endif
+
+
+
 	if (rc)
 		dev_err(&pon->spmi->dev, "Unable to send input event\n");
 
@@ -717,6 +788,9 @@ static int __devinit qpnp_pon_config_init(struct qpnp_pon *pon)
 	int rc = 0, i = 0;
 	struct device_node *pp = NULL;
 	struct qpnp_pon_config *cfg;
+#ifdef CONFIG_MACH_LGE
+	int disable = 0;
+#endif
 	u8 pon_ver;
 
 	/* Check if it is rev B */
@@ -731,6 +805,13 @@ static int __devinit qpnp_pon_config_init(struct qpnp_pon *pon)
 
 	/* iterate through the list of pon configs */
 	while ((pp = of_get_next_child(pon->spmi->dev.of_node, pp))) {
+
+#ifdef CONFIG_MACH_LGE
+		rc = of_property_read_u32(pp, "qcom,disable", &disable);
+		if (!rc && disable)
+			continue;
+		pr_debug("%s: &pon->pon_cfg[%d]\n", __func__, i);
+#endif
 
 		cfg = &pon->pon_cfg[i++];
 
@@ -982,6 +1063,45 @@ free_input_dev:
 	return rc;
 }
 
+#ifdef CONFIG_LGE_WIRELESS_CHARGER_RT9536
+int qpnp_is_cblpwr_on(void)
+{
+	int rc;
+	u8 pon_rt_sts = 0;
+	struct qpnp_pon_config *cfg;
+	struct qpnp_pon *pon=sys_reset_dev;
+	if (!pon)
+		return -EPROBE_DEFER;
+	
+	cfg = qpnp_get_cfg(pon, PON_CBLPWR);
+	if (!cfg) {
+		dev_err(&pon->spmi->dev, "Invalid config pointer\n");
+		return -1;
+	}
+
+	rc = spmi_ext_register_readl(pon->spmi->ctrl, pon->spmi->sid,
+				QPNP_PON_RT_STS(pon->base), &pon_rt_sts, 1);
+
+
+	if (pon_rt_sts & QPNP_PON_CBLPWR_N_SET) {
+		return 1;
+	} else {
+		return 0;
+	}	
+}
+EXPORT_SYMBOL(qpnp_is_cblpwr_on);
+
+int32_t qpnp_is_pon_ready(void)
+{
+	struct qpnp_pon *pon = sys_reset_dev;
+
+	if (!pon)
+		return -EPROBE_DEFER;
+	return 0;
+}
+EXPORT_SYMBOL(qpnp_is_pon_ready);
+#endif
+
 static int __devinit qpnp_pon_probe(struct spmi_device *spmi)
 {
 	struct qpnp_pon *pon;
@@ -990,6 +1110,9 @@ static int __devinit qpnp_pon_probe(struct spmi_device *spmi)
 	u32 delay = 0, s3_debounce = 0;
 	int rc, sys_reset, index;
 	u8 pon_sts = 0;
+#ifdef CONFIG_MACH_LGE
+	int disable = 0;
+#endif
 
 	pon = devm_kzalloc(&spmi->dev, sizeof(struct qpnp_pon),
 							GFP_KERNEL);
@@ -1009,9 +1132,20 @@ static int __devinit qpnp_pon_probe(struct spmi_device *spmi)
 
 	pon->spmi = spmi;
 
+#ifdef CONFIG_MACH_LGE
+	/* get the total number of pon configurations */
+	while ((itr = of_get_next_child(spmi->dev.of_node, itr))) {
+		rc = of_property_read_u32(itr, "qcom,disable", &disable);
+		if (rc || disable == 0)
+			pon->num_pon_config++;
+	}
+	pr_debug("%s: num_pon_config %d\n", __func__, pon->num_pon_config);
+#else
 	/* get the total number of pon configurations */
 	while ((itr = of_get_next_child(spmi->dev.of_node, itr)))
 		pon->num_pon_config++;
+#endif
+
 
 	if (!pon->num_pon_config) {
 		/* No PON config., do not register the driver */
@@ -1093,7 +1227,9 @@ static int __devinit qpnp_pon_probe(struct spmi_device *spmi)
 	dev_set_drvdata(&spmi->dev, pon);
 
 	INIT_DELAYED_WORK(&pon->bark_work, bark_work_func);
-
+#ifdef CONFIG_LGE_WIRELESS_CHARGER_RT9536
+	INIT_WORK(&pon->cblpwr_interrupt_work, cblpwr_interrupt_worker);
+#endif
 	/* register the PON configurations */
 	rc = qpnp_pon_config_init(pon);
 	if (rc) {
@@ -1102,6 +1238,16 @@ static int __devinit qpnp_pon_probe(struct spmi_device *spmi)
 		return rc;
 	}
 
+/*                                                                         */
+#if defined(CONFIG_ARCH_MSM8610) //W3,W5 model
+ /* Enable SMPL */ 
+   { 
+    unsigned char d = 0x80; 
+    spmi_ext_register_writel(pon->spmi->ctrl, pon->spmi->sid, 0x5A48, &d, 1); 
+    qpnp_pon_trigger_config(PON_SMPL,1); 
+   } 
+#endif
+/*                                                                         */
 	return rc;
 }
 

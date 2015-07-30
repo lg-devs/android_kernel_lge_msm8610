@@ -307,7 +307,7 @@ static int mdp3_ctrl_res_req_bus(struct msm_fb_data_type *mfd, int status)
 		int ib = 0;
 		ab = panel_info->xres * panel_info->yres * 4;
 		ab *= panel_info->mipi.frame_rate;
-		ib = (ab * 3) / 2;
+		ib = (ab * 5) / 2;
 		rc = mdp3_bus_scale_set_quota(MDP3_CLIENT_DMA_P, ab, ib);
 	} else {
 		rc = mdp3_bus_scale_set_quota(MDP3_CLIENT_DMA_P, 0, 0);
@@ -366,10 +366,10 @@ static int mdp3_ctrl_get_intf_type(struct msm_fb_data_type *mfd)
 	return type;
 }
 
-static int mdp3_ctrl_get_source_format(struct msm_fb_data_type *mfd)
+static int mdp3_ctrl_get_source_format(u32 imgType)
 {
 	int format;
-	switch (mfd->fb_imgType) {
+	switch (imgType) {
 	case MDP_RGB_565:
 		format = MDP3_DMA_IBUF_FORMAT_RGB565;
 		break;
@@ -474,7 +474,7 @@ static int mdp3_ctrl_dma_init(struct msm_fb_data_type *mfd,
 	fix = &fbi->fix;
 	var = &fbi->var;
 
-	sourceConfig.format = mdp3_ctrl_get_source_format(mfd);
+	sourceConfig.format = mdp3_ctrl_get_source_format(mfd->fb_imgType);
 	sourceConfig.width = panel_info->xres;
 	sourceConfig.height = panel_info->yres;
 	sourceConfig.x = 0;
@@ -508,7 +508,7 @@ static int mdp3_ctrl_on(struct msm_fb_data_type *mfd)
 	struct mdp3_session_data *mdp3_session;
 	struct mdss_panel_data *panel;
 
-	pr_debug("mdp3_ctrl_on\n");
+	pr_info("mdp3_ctrl_on++\n");
 	mdp3_session = (struct mdp3_session_data *)mfd->mdp.private1;
 	if (!mdp3_session || !mdp3_session->panel || !mdp3_session->dma ||
 		!mdp3_session->intf) {
@@ -588,6 +588,7 @@ static int mdp3_ctrl_on(struct msm_fb_data_type *mfd)
 	} else {
 		mdp3_session->first_commit = true;
 	}
+	pr_info("mdp3_ctrl_on--\n");
 
 on_error:
 	if (!rc)
@@ -602,7 +603,7 @@ static int mdp3_ctrl_off(struct msm_fb_data_type *mfd)
 	struct mdp3_session_data *mdp3_session;
 	struct mdss_panel_data *panel;
 
-	pr_debug("mdp3_ctrl_off\n");
+	pr_info("mdp3_ctrl_off++\n");
 	mdp3_session = (struct mdp3_session_data *)mfd->mdp.private1;
 	if (!mdp3_session || !mdp3_session->panel || !mdp3_session->dma ||
 		!mdp3_session->intf) {
@@ -830,19 +831,40 @@ static int mdp3_overlay_get(struct msm_fb_data_type *mfd,
 	return rc;
 }
 
+#if defined (CONFIG_MACH_MSM8X10_W5) || defined (CONFIG_MACH_MSM8X10_W6)
+/* At booting up, Between LG Logo and Operation Animation showing, abnormal LG Logo is appearing one time.
+Because LG Logo image format is RGB888, Android side image format is RGBA8888, both Image formats are mismatched.
+So, We add the code to change MDP_RGBA_8888 to MDP_RGB_888 when is_done_drawing_logo is not "1".
+is_done_drawing_logo is set to 1 at mdss_dsi_panel_off. 
+*/
+extern char is_done_drawing_logo;
+#endif
+
 static int mdp3_overlay_set(struct msm_fb_data_type *mfd,
 				struct mdp_overlay *req)
 {
 	int rc = 0;
 	struct mdp3_session_data *mdp3_session = mfd->mdp.private1;
-	struct fb_var_screeninfo *var;
+	struct mdp3_dma *dma = mdp3_session->dma;
 	struct fb_fix_screeninfo *fix;
 	struct fb_info *fbi = mfd->fbi;
 	int stride;
+	int format;
 
 	fix = &fbi->fix;
-	var = &fbi->var;
-	stride = req->src.width * var->bits_per_pixel/8;
+#if defined (CONFIG_MACH_MSM8X10_W5) || defined (CONFIG_MACH_MSM8X10_W6)
+/* At booting up, Between LG Logo and Operation Animation showing, abnormal LG Logo is appearing one time.
+Because LG Logo image format is RGB888, Android side image format is RGBA8888, both Image formats are mismatched.
+So, We add the code to change MDP_RGBA_8888 to MDP_RGB_888 when is_done_drawing_logo is not "1".
+is_done_drawing_logo is set to 1 at mdss_dsi_panel_off. 
+*/
+	if (!is_done_drawing_logo) {
+		req->src.format = MDP_RGB_888;
+	}
+#endif
+
+	stride = req->src.width * ppp_bpp(req->src.format);
+	format = mdp3_ctrl_get_source_format(req->src.format);
 
 	mutex_lock(&mdp3_session->lock);
 
@@ -851,9 +873,18 @@ static int mdp3_overlay_set(struct msm_fb_data_type *mfd,
 
 	mdp3_session->overlay = *req;
 	if (req->id == MSMFB_NEW_REQUEST) {
-		if (fix->line_length != stride)
-			mdp3_session->dma->config_stride(
-						mdp3_session->dma, stride);
+		if (dma->source_config.stride != stride ||
+				dma->source_config.width != req->src.width ||
+				dma->source_config.height != req->src.height ||
+				dma->source_config.format != format) {
+			dma->source_config.width = req->src.width;
+			dma->source_config.height = req->src.height,
+			dma->source_config.format = format;
+			dma->source_config.stride = stride;
+			mdp3_clk_enable(1, 0);
+			mdp3_session->dma->dma_config_source(dma);
+			mdp3_clk_enable(0, 0);
+		}
 		mdp3_session->overlay.id = 1;
 		req->id = 1;
 	}
@@ -869,13 +900,22 @@ static int mdp3_overlay_unset(struct msm_fb_data_type *mfd, int ndx)
 	struct mdp3_session_data *mdp3_session = mfd->mdp.private1;
 	struct fb_info *fbi = mfd->fbi;
 	struct fb_fix_screeninfo *fix;
+	struct mdss_panel_info *panel_info = mfd->panel_info;
+	int format;
 
 	fix = &fbi->fix;
+	format = mdp3_ctrl_get_source_format(mfd->fb_imgType);
 	mutex_lock(&mdp3_session->lock);
 
 	if (mdp3_session->overlay.id == ndx && ndx == 1) {
-		mdp3_session->dma->config_stride(mdp3_session->dma,
-							fix->line_length);
+		struct mdp3_dma *dma = mdp3_session->dma;
+		dma->source_config.width = panel_info->xres,
+		dma->source_config.height = panel_info->yres,
+		dma->source_config.format = format;
+		dma->source_config.stride = fix->line_length;
+		mdp3_clk_enable(1, 0);
+		mdp3_session->dma->dma_config_source(dma);
+		mdp3_clk_enable(0, 0);
 		mdp3_session->overlay.id = MSMFB_NEW_REQUEST;
 		mdp3_bufq_deinit(&mdp3_session->bufq_in);
 	} else {
@@ -990,9 +1030,13 @@ static int mdp3_ctrl_display_commit_kickoff(struct msm_fb_data_type *mfd,
 		mdp3_session->first_commit = false;
 	}
 
-	mdp3_session->vsync_before_commit = 0;
-	if (reset_done && (panel && panel->set_backlight))
+        mdp3_session->vsync_before_commit = 0;
+	if (reset_done && (panel && panel->set_backlight)){
+#if defined(CONFIG_FB_MSM_MIPI_TIANMA_CMD_HVGA_PT)
+        msleep(1);
+#endif
 		panel->set_backlight(panel, panel->panel_info.bl_max);
+	}
 
 	mutex_unlock(&mdp3_session->lock);
 
@@ -1008,6 +1052,10 @@ static void mdp3_ctrl_pan_display(struct msm_fb_data_type *mfd)
 	u32 offset;
 	int bpp;
 	struct mdss_panel_info *panel_info = mfd->panel_info;
+#if defined(CONFIG_FB_MSM_MIPI_TIANMA_CMD_HVGA_PT) || defined(CONFIG_MACH_MSM8X10_W5) || defined(CONFIG_MACH_MSM8X10_W6)
+	bool reset_done = false;
+	struct mdss_panel_data *panel;
+#endif
 
 	pr_debug("mdp3_ctrl_pan_display\n");
 	if (!mfd || !mfd->mdp.private1)
@@ -1017,9 +1065,15 @@ static void mdp3_ctrl_pan_display(struct msm_fb_data_type *mfd)
 	if (!mdp3_session || !mdp3_session->dma)
 		return;
 
+#if defined(CONFIG_FB_MSM_MIPI_TIANMA_CMD_HVGA_PT) || defined(CONFIG_MACH_MSM8X10_W5) || defined(CONFIG_MACH_MSM8X10_W6)
+	panel = mdp3_session->panel;
+#endif
 	if (!mdp3_iommu_is_attached(MDP3_CLIENT_DMA_P)) {
 		pr_debug("continuous splash screen, IOMMU not attached\n");
 		mdp3_ctrl_reset(mfd);
+#if defined(CONFIG_FB_MSM_MIPI_TIANMA_CMD_HVGA_PT) || defined(CONFIG_MACH_MSM8X10_W5) || defined(CONFIG_MACH_MSM8X10_W6)
+		reset_done = true;
+#endif
 	}
 	mdp3_release_splash_memory();
 
@@ -1060,6 +1114,11 @@ static void mdp3_ctrl_pan_display(struct msm_fb_data_type *mfd)
 		msleep(1000 / panel_info->mipi.frame_rate);
 		mdp3_session->first_commit = false;
 	}
+#if defined(CONFIG_FB_MSM_MIPI_TIANMA_CMD_HVGA_PT) || defined(CONFIG_MACH_MSM8X10_W5) || defined(CONFIG_MACH_MSM8X10_W6)
+	if (reset_done && (panel && panel->set_backlight)){
+		panel->set_backlight(panel, panel->panel_info.bl_max);
+    }
+#endif
 
 	mdp3_session->vsync_before_commit = 0;
 

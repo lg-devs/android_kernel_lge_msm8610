@@ -270,4 +270,34 @@ config SND_SOC_MDM9625
 	select SND_DYNAMIC_MINORS
 	help
 	 To add support for SoC audio on MDM9625 boards.
+	 
+config SND_LGE_EFFECT
+       bool "LGE DSP EFFECT"	
+       default y
+       help
+        To support LGE DSP EFFECT
+	 
+config SND_LGE_NORMALIZER
+	bool "LGE DSP NORMALIZER"
+	default y
+	help
+	 To support LGE DSP NORMALIZER
+
+config SND_LGE_MABL
+    bool "LGE DSP MABL"
+    default y
+    help
+     To support LGE DSP MABL
+
+config LGE_STEREO_SPEAKER
+	bool "LGE STEREO SPEAKER"
+	depends on MACH_MSM8226_E9WIFI_OPEN_KR
+	help
+	 To support stereo speaker for msm8x26
+
+config LGE_SW_IRRC_MUTE_SPEAKER
+	bool "LGE SW IRRC MUTE SPEAKER"
+	depends on (MACH_MSM8226_E9WIFI_OPEN_KR && LGE_STEREO_SPEAKER)
+	help
+	 To support mute stereo speaker for msm8x26
 endmenu

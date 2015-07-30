@@ -1150,7 +1150,6 @@ int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl)
 		} else if (ctl->mixer_right) {
 			struct mdss_mdp_mixer *mixer = ctl->mixer_right;
 			u32 out, off;
-
 			mdss_mdp_pp_resume(ctl, mixer->num);
 			mixer->params_changed++;
 			out = (mixer->height << 16) | mixer->width;

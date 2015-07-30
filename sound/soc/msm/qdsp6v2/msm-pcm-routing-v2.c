@@ -9,6 +9,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+	 
 
 #include <linux/init.h>
 #include <linux/err.h>
@@ -36,6 +37,9 @@
 #include "msm-dolby-dap-config.h"
 #include "q6voice.h"
 #include "q6core.h"
+
+
+
 
 struct msm_pcm_routing_bdai_data {
 	u16 port_id; /* AFE port ID */
@@ -290,7 +294,7 @@ static struct msm_pcm_routing_fdai_data
 /* Track performance mode of all front-end multimedia sessions.
  * Performance mode is only valid when session is valid.
  */
-static bool fe_dai_perf_mode[MSM_FRONTEND_DAI_MM_SIZE][2];
+static int fe_dai_perf_mode[MSM_FRONTEND_DAI_MM_SIZE][2];
 
 static uint8_t is_be_dai_extproc(int be_dai)
 {
@@ -303,7 +307,7 @@ static uint8_t is_be_dai_extproc(int be_dai)
 }
 
 static void msm_pcm_routing_build_matrix(int fedai_id, int dspst_id,
-	int path_type, bool perf_mode)
+	int path_type, int perf_mode)
 {
 	int i, port_type;
 	struct route_payload payload;
@@ -365,7 +369,7 @@ void msm_pcm_routing_reg_psthr_stream(int fedai_id, int dspst_id,
 	mutex_unlock(&routing_lock);
 }
 
-void msm_pcm_routing_reg_phy_stream(int fedai_id, bool perf_mode,
+void msm_pcm_routing_reg_phy_stream(int fedai_id, int perf_mode,
 					int dspst_id, int stream_type)
 {
 	int i, session_type, path_type, port_type, port_id, topology;
@@ -437,7 +441,7 @@ void msm_pcm_routing_reg_phy_stream(int fedai_id, bool perf_mode,
 			port_id = srs_port_id = msm_bedais[i].port_id;
 			srs_send_params(srs_port_id, 1, 0);
 			if ((DOLBY_ADM_COPP_TOPOLOGY_ID == topology) &&
-			    (!perf_mode))
+			    (perf_mode == LEGACY_PCM_MODE))
 				if (dolby_dap_init(port_id,
 						msm_bedais[i].channel) < 0)
 					pr_err("%s: Err init dolby dap\n",
@@ -494,7 +498,8 @@ void msm_pcm_routing_dereg_phy_stream(int fedai_id, int stream_type)
 			adm_close(msm_bedais[i].port_id,
 				  fe_dai_perf_mode[fedai_id][session_type]);
 			if ((DOLBY_ADM_COPP_TOPOLOGY_ID == topology) &&
-			    (fe_dai_perf_mode[fedai_id][session_type] == false))
+			    (fe_dai_perf_mode[fedai_id][session_type] ==
+							LEGACY_PCM_MODE))
 				dolby_dap_deinit(msm_bedais[i].port_id);
 		}
 	}
@@ -604,7 +609,8 @@ static void msm_pcm_routing_process_audio(u16 reg, u16 val, int set)
 			port_id = srs_port_id = msm_bedais[reg].port_id;
 			srs_send_params(srs_port_id, 1, 0);
 			if ((DOLBY_ADM_COPP_TOPOLOGY_ID == topology) &&
-			    (fe_dai_perf_mode[val][session_type] == false))
+			    (fe_dai_perf_mode[val][session_type] ==
+							LEGACY_PCM_MODE))
 				if (dolby_dap_init(port_id, channels) < 0)
 					pr_err("%s: Err init dolby dap\n",
 						__func__);
@@ -621,7 +627,8 @@ static void msm_pcm_routing_process_audio(u16 reg, u16 val, int set)
 			adm_close(msm_bedais[reg].port_id,
 				  fe_dai_perf_mode[val][session_type]);
 			if ((DOLBY_ADM_COPP_TOPOLOGY_ID == topology) &&
-			    (fe_dai_perf_mode[val][session_type] == false))
+			    (fe_dai_perf_mode[val][session_type] ==
+							LEGACY_PCM_MODE))
 				dolby_dap_deinit(msm_bedais[reg].port_id);
 			msm_pcm_routing_build_matrix(val,
 				fdai->strm_id, path_type,
@@ -2781,6 +2788,7 @@ static const struct snd_kcontrol_new dolby_dap_param_end_point_controls[] = {
 int msm_routing_get_rms_value_control(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol) {
 	int rc = 0;
+	int be_idx = 0;
 	char *param_value;
 	int *update_param_value;
 	uint32_t param_length = sizeof(uint32_t);
@@ -2790,21 +2798,26 @@ int msm_routing_get_rms_value_control(struct snd_kcontrol *kcontrol,
 		pr_err("%s, param memory alloc failed\n", __func__);
 		return -ENOMEM;
 	}
-	rc = adm_get_params(SLIMBUS_0_TX,
-			RMS_MODULEID_APPI_PASSTHRU,
-			RMS_PARAM_FIRST_SAMPLE,
-			param_length + param_payload_len,
-			param_value);
-	if (rc) {
-		pr_err("%s: get parameters failed\n", __func__);
-		kfree(param_value);
-		return -EINVAL;
-	}
-	update_param_value = (int *)param_value;
-	ucontrol->value.integer.value[0] = update_param_value[0];
+	for (be_idx = 0; be_idx < MSM_BACKEND_DAI_MAX; be_idx++)
+		if (msm_bedais[be_idx].port_id == SLIMBUS_0_TX)
+			break;
+	if ((be_idx < MSM_BACKEND_DAI_MAX) && msm_bedais[be_idx].active) {
+		rc = adm_get_params(SLIMBUS_0_TX,
+				RMS_MODULEID_APPI_PASSTHRU,
+				RMS_PARAM_FIRST_SAMPLE,
+				param_length + param_payload_len,
+				param_value);
+		if (rc) {
+			pr_err("%s: get parameters failed\n", __func__);
+			kfree(param_value);
+			return -EINVAL;
+		}
+		update_param_value = (int *)param_value;
+		ucontrol->value.integer.value[0] = update_param_value[0];
 
-	pr_debug("%s: FROM DSP value[0] 0x%x\n",
-		__func__, update_param_value[0]);
+		pr_debug("%s: FROM DSP value[0] 0x%x\n",
+			  __func__, update_param_value[0]);
+	}
 	kfree(param_value);
 	return 0;
 }
@@ -3960,7 +3973,8 @@ static int msm_pcm_routing_close(struct snd_pcm_substream *substream)
 				  fe_dai_perf_mode[i][session_type]);
 			srs_port_id = -1;
 			if ((DOLBY_ADM_COPP_TOPOLOGY_ID == topology) &&
-			    (fe_dai_perf_mode[i][session_type] == false))
+			    (fe_dai_perf_mode[i][session_type] ==
+							LEGACY_PCM_MODE))
 				dolby_dap_deinit(bedai->port_id);
 		}
 	}
@@ -4060,7 +4074,8 @@ static int msm_pcm_routing_prepare(struct snd_pcm_substream *substream)
 			port_id = srs_port_id = bedai->port_id;
 			srs_send_params(srs_port_id, 1, 0);
 			if ((DOLBY_ADM_COPP_TOPOLOGY_ID == topology) &&
-			    (fe_dai_perf_mode[i][session_type] == false))
+			    (fe_dai_perf_mode[i][session_type] ==
+							LEGACY_PCM_MODE))
 				if (dolby_dap_init(port_id, channels) < 0)
 					pr_err("%s: Err init dolby dap\n",
 						__func__);

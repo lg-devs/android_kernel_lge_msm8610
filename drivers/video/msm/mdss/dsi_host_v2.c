@@ -50,6 +50,10 @@ struct dsi_host_v2_private {
 static struct dsi_host_v2_private *dsi_host_private;
 static int msm_dsi_clk_ctrl(struct mdss_panel_data *pdata, int enable);
 
+#if defined(CONFIG_MACH_MSM8X10_W5) || defined(CONFIG_MACH_MSM8X10_W65)
+extern int lge_lcd_id;
+#endif
+
 int msm_dsi_init(void)
 {
 	if (!dsi_host_private) {
@@ -958,14 +962,28 @@ int msm_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 	}
 
 	msm_dsi_clk_ctrl(&ctrl->panel_data, 1);
+#if !(defined (CONFIG_MACH_MSM8X10_W6) || defined(CONFIG_MACH_MSM8X10_W55))
+#if defined (CONFIG_MACH_MSM8X10_W5)
+	if(lge_lcd_id == 1)					// W5 Tovis LCD
+#endif
 	dsi_set_tx_power_mode(0);
-
+#endif 
+#if defined(CONFIG_MACH_MSM8X10_W65)
+	dsi_set_tx_power_mode(0);
+#endif
 	if (req->flags & CMD_REQ_RX)
 		msm_dsi_cmdlist_rx(ctrl, req);
 	else
 		msm_dsi_cmdlist_tx(ctrl, req);
-
+#if !(defined (CONFIG_MACH_MSM8X10_W6) || defined(CONFIG_MACH_MSM8X10_W55))
+#if defined (CONFIG_MACH_MSM8X10_W5)
+		if(lge_lcd_id == 1)				//W5 tovis LCD
+#endif
 	dsi_set_tx_power_mode(1);
+#endif 
+#if defined(CONFIG_MACH_MSM8X10_W65)
+	dsi_set_tx_power_mode(1);
+#endif
 	msm_dsi_clk_ctrl(&ctrl->panel_data, 0);
 
 	mutex_unlock(&ctrl->cmd_mutex);
@@ -1009,7 +1027,13 @@ static int msm_dsi_cal_clk_rate(struct mdss_panel_data *pdata,
 
 	*bitclk_rate = (width + hbp + hfp + hspw) * (height + vbp + vfp + vspw);
 	*bitclk_rate *= mipi->frame_rate;
-	*bitclk_rate *= pdata->panel_info.bpp;
+
+	if(pdata->panel_info.bpp==18){
+		*bitclk_rate *=24;
+	}else{
+		*bitclk_rate *= pdata->panel_info.bpp;
+	}
+
 	*bitclk_rate /= lanes;
 
 	*byteclk_rate = *bitclk_rate / 8;
@@ -1034,7 +1058,7 @@ static int msm_dsi_on(struct mdss_panel_data *pdata)
 	unsigned char *ctrl_base = dsi_host_private->dsi_base;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 
-	pr_debug("msm_dsi_on\n");
+	pr_info("msm_dsi_on++\n");
 
 	pinfo = &pdata->panel_info;
 
@@ -1123,7 +1147,52 @@ static int msm_dsi_on(struct mdss_panel_data *pdata)
 
 	msm_dsi_sw_reset();
 	msm_dsi_host_init(mipi);
+	
+#if defined(CONFIG_MACH_MSM8X10_W5)
+#if !defined(CONFIG_MACH_MSM8X10_W55)
+	if(lge_lcd_id == 0){								// W5 LGD LG4577
+		u32 tmp; 
+		tmp = MIPI_INP(ctrl_base + DSI_LANE_CTRL);
+		tmp &= ~(1<<28);
+		MIPI_OUTP(ctrl_base + DSI_LANE_CTRL, tmp);
+		wmb();
+		
+		msleep(10);
+		dsi_ctrl_gpio_request(ctrl_pdata);
+		mdss_dsi_panel_reset(pdata, 1);
+		mipi->force_clk_lane_hs = 1;
+	}
+#else													// W55
+	{
+		u32 tmp; 
+		tmp = MIPI_INP(ctrl_base + DSI_LANE_CTRL);
+		tmp &= ~(1<<28);
+		MIPI_OUTP(ctrl_base + DSI_LANE_CTRL, tmp);
+		wmb();
+	}
 
+	msleep(10);
+	dsi_ctrl_gpio_request(ctrl_pdata);
+	mdss_dsi_panel_reset(pdata, 1);
+	mipi->force_clk_lane_hs = 1;
+#endif
+#endif
+#if defined(CONFIG_MACH_MSM8X10_W6)
+#if !defined(CONFIG_MACH_MSM8X10_W65)
+	{
+		u32 tmp; 
+		tmp = MIPI_INP(ctrl_base + DSI_LANE_CTRL);
+		tmp &= ~(1<<28);
+		MIPI_OUTP(ctrl_base + DSI_LANE_CTRL, tmp);
+		wmb();
+	}
+
+	msleep(10);
+	dsi_ctrl_gpio_request(ctrl_pdata);
+	mdss_dsi_panel_reset(pdata, 1);
+	mipi->force_clk_lane_hs = 1;
+#endif
+#endif	
 	if (mipi->force_clk_lane_hs) {
 		u32 tmp;
 
@@ -1178,6 +1247,7 @@ static int msm_dsi_off(struct mdss_panel_data *pdata)
 
 	mutex_unlock(&ctrl_pdata->mutex);
 
+	pr_info("msm_dsi_off--\n");
 	return ret;
 }
 
@@ -1216,6 +1286,17 @@ static int msm_dsi_cont_on(struct mdss_panel_data *pdata)
 	msm_dsi_set_irq(ctrl_pdata, DSI_INTR_ERROR_MASK);
 	dsi_host_private->clk_count = 1;
 	dsi_host_private->dsi_on = 1;
+
+#if defined(CONFIG_FB_MSM_MIPI_TIANMA_CMD_HVGA_PT_PANEL)
+    if (gpio_is_valid(ctrl_pdata->disp_te_gpio)) {
+        ret = gpio_request(ctrl_pdata->disp_te_gpio, "disp_te");
+        if (ret)
+            pr_err("gpio request failed %d\n", ret);
+
+        ctrl_pdata->disp_te_gpio_requested = 1;
+    }
+#endif
+
 	mutex_unlock(&ctrl_pdata->mutex);
 	return 0;
 }
@@ -1336,9 +1417,27 @@ static struct device_node *dsi_find_panel_of_node(
 		/* no panel cfg chg, parse dt */
 		pr_debug("%s:%d: no cmd line cfg present\n",
 			 __func__, __LINE__);
+#if defined(CONFIG_MACH_MSM8X10_W5) || defined(CONFIG_MACH_MSM8X10_W65)
+		pr_debug("%s:%d: lcd id :lge_lcd_id : %d \n", __func__, __LINE__,lge_lcd_id);
+
+		if (lge_lcd_id == 0)//primary ID
+		{
+			pr_debug("%s:%d: Primary panel \n", __func__, __LINE__);
+			dsi_pan_node = of_parse_phandle(
+								pdev->dev.of_node, "qcom,dsi-pref-prim-pan", 0);
+		}
+		else //for safe secondary
+		{
+			pr_debug("%s:%d: Secondary panel \n", __func__, __LINE__);
+			dsi_pan_node = of_parse_phandle(
+								pdev->dev.of_node, "qcom,dsi-pref-secondary-pan", 0);
+		}
+#else 	//qct original
 		dsi_pan_node = of_parse_phandle(
 			pdev->dev.of_node,
 			"qcom,dsi-pref-prim-pan", 0);
+#endif
+
 		if (!dsi_pan_node) {
 			pr_err("%s:can't find panel phandle\n",
 			       __func__);

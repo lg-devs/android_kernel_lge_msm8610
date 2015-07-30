@@ -21,6 +21,7 @@
 #include <linux/gpio.h>
 #include <linux/err.h>
 #include <linux/regulator/consumer.h>
+#include <mach/board_lge.h>
 
 #include "mdss.h"
 #include "mdss_panel.h"
@@ -28,6 +29,37 @@
 #include "mdss_debug.h"
 
 static unsigned char *mdss_dsi_base;
+
+#if defined(CONFIG_LGE_MIPI_TOVIS_VIDEO_540P_PANEL) || defined(CONFIG_FB_MSM_MIPI_TIANMA_VIDEO_QHD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_LGIT_LH470WX1_VIDEO_HD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_TOVIS_LM570HN1A_VIDEO_HD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_LGD_LH500WX9_VIDEO_HD_PT_PANEL)
+int has_dsv_f;
+
+#endif
+#ifdef CONFIG_FB_MSM_MIPI_LGD_LH500WX9_VIDEO_HD_PT_PANEL
+int mdss_dsi_lane_config(struct mdss_panel_data *pdata, int enable)
+{
+	u32 tmp;
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+	if (pdata == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return -EINVAL;
+	}
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,panel_data);
+	tmp = MIPI_INP((ctrl_pdata->ctrl_base) + 0xac);
+	pr_info("%s+: dsi_lane_ctrl=0x%x\n", __func__, tmp);
+	if (enable) {
+		tmp |= DSI_LANE_CTRL_HS_MASK;
+		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0xac, tmp);
+		wmb();
+	} else {
+		tmp &= DSI_LANE_CTRL_LP_MASK;
+		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0xac, tmp);
+		wmb();
+	}
+	pr_info("%s-: current mode=%s dsi_lane_ctrl=0x%x\n", __func__, (enable ? "hs" : "lp"), tmp);
+	return 0;
+}
+EXPORT_SYMBOL(mdss_dsi_lane_config);
+#endif
 
 static int mdss_dsi_regulator_init(struct platform_device *pdev)
 {
@@ -54,6 +86,9 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 	int ret;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 
+	hw_rev_type hw_rev;
+	hw_rev = lge_get_board_revno();
+	
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
 		ret = -EINVAL;
@@ -62,9 +97,26 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
-	pr_debug("%s: enable=%d\n", __func__, enable);
+	pr_info("%s: enable=%d\n", __func__, enable);
 
 	if (enable) {
+#ifdef CONFIG_FB_MSM_MIPI_LGIT_LH470WX1_VIDEO_HD_PT_PANEL
+#if defined(CONFIG_MACH_MSM8926_X10_VZW) || defined(CONFIG_MACH_MSM8926_B2L_ATT) || defined(CONFIG_MACH_MSM8926_JAGNM_ATT) || defined(CONFIG_MACH_MSM8926_JAGNM_GLOBAL_COM)
+		if(HW_REV_0 == hw_rev)
+#endif		
+    	{
+			if (!has_dsv_f && pdata->panel_info.panel_power_on == 0)//          
+			{
+				if(gpio_get_value(ctrl_pdata->rst_gpio)) {
+					printk("mdss_dsi_panel_reset called \n");
+					mdss_dsi_panel_reset(pdata, 0);
+					mdelay(10);
+				}
+			}
+		}
+#endif
+
+		printk("power_data.num_gpio=%x,power_data.num_vreg=%x\n",ctrl_pdata->power_data.num_gpio, ctrl_pdata->power_data.num_vreg);
 		ret = msm_dss_enable_vreg(
 			ctrl_pdata->power_data.vreg_config,
 			ctrl_pdata->power_data.num_vreg, 1);
@@ -74,13 +126,52 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 			goto error;
 		}
 
-		if (pdata->panel_info.panel_power_on == 0)
+#if defined(CONFIG_LGE_MIPI_DSI_LGD_LVDS_WXGA)
+		ret = lge_lvds_panel_power(pdata, enable);
+		if(ret){
+			pr_err("%s:Failed to enable lge_lvds_panel_power.rc=%d\n",__func__, ret);
+			goto error;
+		}
+#endif
+
+#if defined(CONFIG_LGE_MIPI_DSI_LGD_ASUS_WXGA)
+		ret = tps61282_power(pdata, enable);
+		if(ret){
+			pr_err("%s:Failed to enable lge_asus_panel_power.rc=%d\n",__func__, ret);
+			goto error;
+		}
+#endif
+
+#if defined(CONFIG_LGE_MIPI_TOVIS_VIDEO_540P_PANEL) || defined(CONFIG_FB_MSM_MIPI_TIANMA_VIDEO_QHD_PT_PANEL) ||defined(CONFIG_FB_MSM_MIPI_LGD_LH500WX9_VIDEO_HD_PT_PANEL)
+		if (!has_dsv_f && pdata->panel_info.panel_power_on == 0)//          
 			mdss_dsi_panel_reset(pdata, 1);
-
+#else
+		if(pdata->panel_info.panel_power_on ==0) //qct original
+			mdss_dsi_panel_reset(pdata, 1);
+#endif
 	} else {
+#if defined(CONFIG_LGE_MIPI_TOVIS_VIDEO_540P_PANEL) || defined(CONFIG_FB_MSM_MIPI_TIANMA_VIDEO_QHD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_LGIT_LH470WX1_VIDEO_HD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_TOVIS_LM570HN1A_VIDEO_HD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_LGD_LH500WX9_VIDEO_HD_PT_PANEL)
+		if (!has_dsv_f) //          
+			mdss_dsi_panel_reset(pdata, 0);
+#else
+		mdss_dsi_panel_reset(pdata, 0); //qct original
+#endif
 
-		mdss_dsi_panel_reset(pdata, 0);
+#if defined(CONFIG_LGE_MIPI_DSI_LGD_LVDS_WXGA)
+		ret = lge_lvds_panel_power(pdata, enable);
+		if(ret){
+			pr_err("%s:Failed to disable lge_lvds_panel_power.rc=%d\n",__func__, ret);
+			goto error;
+		}
+#endif
 
+#if defined(CONFIG_LGE_MIPI_DSI_LGD_ASUS_WXGA)
+		ret = tps61282_power(pdata, enable);
+		if(ret){
+			pr_err("%s:Failed to disable lge_asus_panel_power.rc=%d\n",__func__, ret);
+			goto error;
+		}
+#endif
 		ret = msm_dss_enable_vreg(
 			ctrl_pdata->power_data.vreg_config,
 			ctrl_pdata->power_data.num_vreg, 0);
@@ -89,6 +180,7 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 				__func__, ret);
 		}
 	}
+
 error:
 	return ret;
 }
@@ -307,7 +399,7 @@ static int mdss_dsi_off(struct mdss_panel_data *pdata)
 				panel_data);
 
 	panel_info = &ctrl_pdata->panel_data.panel_info;
-	pr_debug("%s+: ctrl=%p ndx=%d\n", __func__,
+	printk("%s+: ctrl=%p ndx=%d\n", __func__,
 				ctrl_pdata, ctrl_pdata->ndx);
 
 	if (pdata->panel_info.type == MIPI_CMD_PANEL)
@@ -372,7 +464,7 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 
-	pr_debug("%s+: ctrl=%p ndx=%d\n",
+	pr_info("%s+: ctrl=%p ndx=%d\n",
 				__func__, ctrl_pdata, ctrl_pdata->ndx);
 
 	pinfo = &pdata->panel_info;
@@ -472,6 +564,17 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x5C, data);
 	}
 
+	#if defined(CONFIG_FB_MSM_MIPI_TOVIS_LM570HN1A_VIDEO_HD_PT_PANEL)
+	{
+#if defined(CONFIG_MACH_MSM8926_X10_VZW) || defined(CONFIG_MACH_MSM8926_B2L_ATT) || defined(CONFIG_MACH_MSM8926_JAGNM_ATT) || defined(CONFIG_MACH_MSM8926_JAGNM_GLOBAL_COM)
+		if(HW_REV_0 != lge_get_board_revno())
+#endif		
+		{
+			pr_info("[LCD] %s: delay(40) \n",__func__);
+			mdelay(50);
+		}
+	}
+	#endif
 	mdss_dsi_sw_reset(pdata);
 	mdss_dsi_host_init(mipi, pdata);
 
@@ -494,10 +597,25 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 		wmb();
 	}
 
+#if defined(CONFIG_LGE_MIPI_TOVIS_VIDEO_540P_PANEL) || defined(CONFIG_FB_MSM_MIPI_TIANMA_VIDEO_QHD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_LGIT_LH470WX1_VIDEO_HD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_TOVIS_LM570HN1A_VIDEO_HD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_LGD_LH500WX9_VIDEO_HD_PT_PANEL)
+	if( has_dsv_f ) {
+	  u32 tmp;
+	  tmp = MIPI_INP((ctrl_pdata->ctrl_base) + 0xac);
+	  tmp &= ~(1<<28);
+	  MIPI_OUTP((ctrl_pdata->ctrl_base) + 0xac, tmp);
+	  wmb();
+#if defined(CONFIG_FB_MSM_MIPI_LGIT_LH470WX1_VIDEO_HD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_TOVIS_LM570HN1A_VIDEO_HD_PT_PANEL)
+	  mdelay(20);
+#endif
+	  mdss_dsi_panel_reset(pdata, 1);
+	  pr_info(" panel reset after mipi stop state. lane_ctrl value = %x\n", tmp);
+	}
+	#endif
+
 	if (pdata->panel_info.type == MIPI_CMD_PANEL)
 		mdss_dsi_clk_ctrl(ctrl_pdata, 0);
 
-	pr_debug("%s-:\n", __func__);
+	pr_info("%s-:\n", __func__);
 	return 0;
 }
 
@@ -546,7 +664,7 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata)
 	struct mipi_panel_info *mipi;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 
-	pr_debug("%s+:\n", __func__);
+	printk("%s+:\n", __func__);
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -574,7 +692,7 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata)
 		}
 		ctrl_pdata->ctrl_state &= ~CTRL_STATE_PANEL_INIT;
 	}
-	pr_debug("%s-:End\n", __func__);
+	printk("%s-:End\n", __func__);
 	return ret;
 }
 
@@ -726,10 +844,13 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 	}
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
-	pr_debug("%s+:event=%d\n", __func__, event);
+	printk("%s+:event=%d\n", __func__, event);
 
 	switch (event) {
 	case MDSS_EVENT_UNBLANK:
+#if defined(CONFIG_FB_MSM_MIPI_LGD_LH500WX9_VIDEO_HD_PT_PANEL)
+		mdss_dsi_lane_config(&ctrl_pdata->panel_data, 1);
+#endif
 		rc = mdss_dsi_on(pdata);
 		mdss_dsi_op_mode_config(pdata->panel_info.mipi.mode,
 							pdata);
@@ -737,6 +858,9 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 			rc = mdss_dsi_unblank(pdata);
 		break;
 	case MDSS_EVENT_PANEL_ON:
+#if defined(CONFIG_FB_MSM_MIPI_LGD_LH500WX9_VIDEO_HD_PT_PANEL)
+		mdss_dsi_lane_config(&ctrl_pdata->panel_data, 1);
+#endif
 		ctrl_pdata->ctrl_state |= CTRL_STATE_MDP_ACTIVE;
 		if (ctrl_pdata->on_cmds.link_state == DSI_HS_MODE)
 			rc = mdss_dsi_unblank(pdata);
@@ -744,12 +868,18 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 	case MDSS_EVENT_BLANK:
 		if (ctrl_pdata->off_cmds.link_state == DSI_HS_MODE)
 			rc = mdss_dsi_blank(pdata);
+#if defined(CONFIG_FB_MSM_MIPI_LGD_LH500WX9_VIDEO_HD_PT_PANEL)
+		mdss_dsi_lane_config(&ctrl_pdata->panel_data, 1);
+#endif
 		break;
 	case MDSS_EVENT_PANEL_OFF:
 		ctrl_pdata->ctrl_state &= ~CTRL_STATE_MDP_ACTIVE;
 		if (ctrl_pdata->off_cmds.link_state == DSI_LP_MODE)
 			rc = mdss_dsi_blank(pdata);
 		rc = mdss_dsi_off(pdata);
+#if defined(CONFIG_FB_MSM_MIPI_LGD_LH500WX9_VIDEO_HD_PT_PANEL)
+		mdss_dsi_lane_config(&ctrl_pdata->panel_data, 1);
+#endif
 		break;
 	case MDSS_EVENT_CONT_SPLASH_FINISH:
 		ctrl_pdata->ctrl_state &= ~CTRL_STATE_MDP_ACTIVE;
@@ -789,7 +919,7 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		pr_debug("%s: unhandled event=%d\n", __func__, event);
 		break;
 	}
-	pr_debug("%s-:event=%d, rc=%d\n", __func__, event, rc);
+	pr_info("%s-:event=%d, rc=%d\n", __func__, event, rc);
 	return rc;
 }
 
@@ -807,6 +937,7 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
  *
  * returns pointer to panel node on success, NULL on error.
  */
+
 static struct device_node *mdss_dsi_find_panel_of_node(
 		struct platform_device *pdev, char *panel_cfg)
 {
@@ -959,6 +1090,20 @@ static int __devinit mdss_dsi_ctrl_probe(struct platform_device *pdev)
 		       __func__, rc);
 		goto error_vreg;
 	}
+
+#ifdef CONFIG_LGE_MIPI_DSI_LGD_LVDS_WXGA
+	ctrl_pdata->lvds_1v8_vreg = devm_regulator_get(&pdev->dev, "vdd_LVDS_1p8");
+	if(IS_ERR(ctrl_pdata->lvds_1v8_vreg)){
+		pr_err("%s: could not get lvds_1v8_vreg,",__func__);
+		return -ENODEV;
+	}
+
+	ctrl_pdata->lvds_1v2_vreg = devm_regulator_get(&pdev->dev, "vdd_LVDS_1p2");
+	if(IS_ERR(ctrl_pdata->lvds_1v2_vreg)){
+		pr_err("%s: could not get lvds_1v2_vreg,",__func__);
+		return -ENODEV;
+	}
+#endif
 
 	/* DSI panels can be different between controllers */
 	rc = mdss_dsi_get_panel_cfg(panel_cfg);
@@ -1336,6 +1481,11 @@ int dsi_panel_device_register(struct device_node *pan_node,
 			ctrl_pdata->pclk_rate, ctrl_pdata->byte_clk_rate);
 
 	ctrl_pdata->ctrl_state = CTRL_STATE_UNKNOWN;
+
+  #if defined(CONFIG_LGE_MIPI_TOVIS_VIDEO_540P_PANEL) || defined(CONFIG_FB_MSM_MIPI_TIANMA_VIDEO_QHD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_LGIT_LH470WX1_VIDEO_HD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_TOVIS_LM570HN1A_VIDEO_HD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_LGD_LH500WX9_VIDEO_HD_PT_PANEL)
+	has_dsv_f = of_property_read_bool(pan_node,
+			"lge,has-dsv");
+  #endif
 
 	if (pinfo->cont_splash_enabled) {
 		pinfo->panel_power_on = 1;

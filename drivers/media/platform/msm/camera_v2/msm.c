@@ -159,6 +159,9 @@ static void msm_enqueue(struct msm_queue_head *qhead,
 		struct list_head *entry)
 {
 	unsigned long flags;
+
+	BUG_ON(!qhead);  /*                                               */ 
+	
 	spin_lock_irqsave(&qhead->lock, flags);
 	qhead->len++;
 	if (qhead->len > qhead->max)
@@ -696,6 +699,11 @@ int msm_post_event(struct v4l2_event *event, int timeout)
 		if (rc < 0) {
 			pr_err("%s: rc = %d\n", __func__, rc);
 			mutex_unlock(&session->lock);
+/*                                                                    */
+			pr_err("%s: ===== Camera Recovery Start! ===== \n", __func__);
+			dump_stack();
+			send_sig(SIGKILL, current, 0);
+/*                                                                    */
 			return rc;
 		}
 	}
@@ -749,7 +757,6 @@ static int msm_close(struct file *filep)
 	spin_unlock_irqrestore(&msm_pid_lock, flags);
 
 	atomic_set(&pvdev->opened, 0);
-
 	return rc;
 }
 
@@ -789,7 +796,7 @@ static int msm_open(struct file *filep)
 	spin_lock_irqsave(&msm_eventq_lock, flags);
 	msm_eventq = filep->private_data;
 	spin_unlock_irqrestore(&msm_eventq_lock, flags);
-
+       pr_err("%s: rc = %d\n", __func__, rc);
 	return rc;
 }
 

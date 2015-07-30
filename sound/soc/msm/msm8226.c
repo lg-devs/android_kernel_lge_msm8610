@@ -74,6 +74,9 @@ static const struct soc_enum msm8226_auxpcm_enum[] = {
 #define I2S_PCM_SEL 1
 #define I2S_PCM_SEL_OFFSET 1
 
+#if defined(CONFIG_MACH_LGE) && defined(CONFIG_SWITCH_MAX1462X) //                                               
+extern bool maxim_enabled;
+#endif
 void *def_tapan_mbhc_cal(void);
 static int msm_snd_enable_codec_ext_clk(struct snd_soc_codec *codec, int enable,
 					bool dapm);
@@ -148,9 +151,20 @@ static struct mutex cdc_mclk_mutex;
 static struct clk *codec_clk;
 static int clk_users;
 static int ext_spk_amp_gpio = -1;
+#ifdef CONFIG_LGE_STEREO_SPEAKER
+static int ext_spk_amp_gpio2 = -1;
+#endif //                         
+#ifdef CONFIG_LGE_SW_IRRC_MUTE_SPEAKER
+static int flag_mute_spk_for_swirrc = 0;
+void mute_spk_for_swirrc (int enable);
+#endif //                               
 static int vdd_spkr_gpio = -1;
 static int msm_proxy_rx_ch = 2;
 static int slim0_rx_bit_format = SNDRV_PCM_FORMAT_S16_LE;
+
+#ifdef CONFIG_SND_SPK_BOOST
+int boost_gpio = -1;
+#endif
 
 static inline int param_is_mask(int p)
 {
@@ -236,6 +250,32 @@ static int msm8226_mclk_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
+#ifdef CONFIG_LGE_STEREO_SPEAKER
+static void msm8226_ext_spk_power_amp_enable(u32 spk, u32 enable)
+{
+	int gpio;
+
+	if (spk == LO_1_SPK_AMP)
+		gpio = ext_spk_amp_gpio;
+	else
+		gpio = ext_spk_amp_gpio2;
+
+	if (enable) {
+		gpio_direction_output(gpio, enable);
+		/* time takes enable the external power amplifier */
+		usleep_range(EXT_CLASS_D_EN_DELAY,
+			EXT_CLASS_D_EN_DELAY + EXT_CLASS_D_DELAY_DELTA);
+	} else {
+		gpio_direction_output(gpio, enable);
+		/* time takes disable the external power amplifier */
+		usleep_range(EXT_CLASS_D_DIS_DELAY,
+			EXT_CLASS_D_DIS_DELAY + EXT_CLASS_D_DELAY_DELTA);
+	}
+
+	pr_debug("%s: %s external speaker PA#%d.\n", __func__,
+		enable ? "Enable" : "Disable", spk);
+}
+#else //QCT Original
 static void msm8226_ext_spk_power_amp_enable(u32 enable)
 {
 	if (enable) {
@@ -253,11 +293,28 @@ static void msm8226_ext_spk_power_amp_enable(u32 enable)
 	pr_debug("%s: %s external speaker PAs.\n", __func__,
 		enable ? "Enable" : "Disable");
 }
+#endif //                         
 
 static void msm8226_ext_spk_power_amp_on(u32 spk)
 {
+#ifdef CONFIG_LGE_STEREO_SPEAKER
+	if (gpio_is_valid(ext_spk_amp_gpio) && gpio_is_valid(ext_spk_amp_gpio2)) {
+#else //QCT Original
 	if (gpio_is_valid(ext_spk_amp_gpio)) {
+#endif //                         
 		if (spk & (LO_1_SPK_AMP | LO_2_SPK_AMP)) {
+#ifdef CONFIG_LGE_STEREO_SPEAKER
+			pr_debug("%s Enable left or right speakers case spk = 0x%08x\n",
+				__func__, spk);
+
+#ifdef CONFIG_LGE_SW_IRRC_MUTE_SPEAKER
+			if (!flag_mute_spk_for_swirrc)
+#endif //                               
+			{
+				msm8226_ext_spk_power_amp_enable(spk, 1);
+				msm8226_ext_spk_pamp |= spk;
+			}
+#else //QCT Original
 			pr_debug("%s:Enable left and right speakers case spk = 0x%x\n",
 				__func__, spk);
 
@@ -269,6 +326,7 @@ static void msm8226_ext_spk_power_amp_on(u32 spk)
 					pr_debug("%s  enable power", __func__);
 					msm8226_ext_spk_power_amp_enable(1);
 				}
+#endif //                         
 		} else  {
 			pr_err("%s: Invalid external speaker ampl. spk = 0x%x\n",
 				__func__, spk);
@@ -278,8 +336,19 @@ static void msm8226_ext_spk_power_amp_on(u32 spk)
 
 static void msm8226_ext_spk_power_amp_off(u32 spk)
 {
+#ifdef CONFIG_LGE_STEREO_SPEAKER
+	if (gpio_is_valid(ext_spk_amp_gpio) && gpio_is_valid(ext_spk_amp_gpio2)) {
+#else //QCT Original
 	if (gpio_is_valid(ext_spk_amp_gpio)) {
+#endif //                         
 		if (spk & (LO_1_SPK_AMP | LO_2_SPK_AMP)) {
+#ifdef CONFIG_LGE_STEREO_SPEAKER
+			pr_debug("%s Disable left or right speakers case spk = 0x%08x\n",
+				__func__, spk);
+
+			msm8226_ext_spk_power_amp_enable(spk, 0);
+			msm8226_ext_spk_pamp &= ~spk;
+#else //QCT Original
 			pr_debug("%s Disable left and right speakers case spk = 0x%08x",
 				__func__, spk);
 
@@ -292,12 +361,26 @@ static void msm8226_ext_spk_power_amp_off(u32 spk)
 				}
 				msm8226_ext_spk_pamp = 0;
 			}
+#endif //                         
 		 } else  {
 			pr_err("%s: ERROR : Invalid Ext Spk Ampl. spk = 0x%08x\n",
 				__func__, spk);
 		}
 	}
 }
+
+#ifdef CONFIG_LGE_SW_IRRC_MUTE_SPEAKER
+void mute_spk_for_swirrc (int enable)
+{
+	pr_debug("%s: set mute %s\n", __func__, enable?"Enable":"Disable");
+	flag_mute_spk_for_swirrc = enable;
+	if (flag_mute_spk_for_swirrc) {
+		msm8226_ext_spk_power_amp_off(LO_1_SPK_AMP);
+		msm8226_ext_spk_power_amp_off(LO_2_SPK_AMP);
+	}
+}
+EXPORT_SYMBOL_GPL(mute_spk_for_swirrc);
+#endif //                               
 
 static int msm8226_ext_spkramp_event(struct snd_soc_dapm_widget *w,
 			struct snd_kcontrol *k, int event)
@@ -360,7 +443,8 @@ static const struct snd_soc_dapm_widget msm8226_dapm_widgets[] = {
 
 	SND_SOC_DAPM_MIC("Handset Mic", NULL),
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
-	SND_SOC_DAPM_MIC("ANCRight Headset Mic", NULL),
+    SND_SOC_DAPM_MIC("Handset SubMic", NULL), //                                                                                             
+    SND_SOC_DAPM_MIC("ANCRight Headset Mic", NULL),
 	SND_SOC_DAPM_MIC("ANCLeft Headset Mic", NULL),
 
 	SND_SOC_DAPM_MIC("Digital Mic1", NULL),
@@ -436,7 +520,20 @@ static int msm_btsco_rate_get(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
 	pr_debug("%s: msm_btsco_rate  = %d", __func__, msm_btsco_rate);
+#if defined(CONFIG_MACH_LGE)
+	switch (msm_btsco_rate) {
+	case BTSCO_RATE_16KHZ:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+
+	case BTSCO_RATE_8KHZ:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+#else
 	ucontrol->value.integer.value[0] = msm_btsco_rate;
+#endif
 	return 0;
 }
 
@@ -477,7 +574,20 @@ static int msm_btsco_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 static int msm8226_auxpcm_rate_get(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
+#if defined(CONFIG_MACH_LGE)
+	switch (msm8226_auxpcm_rate) {
+	case 16000:
+		ucontrol->value.integer.value[0] = 1;
+		break;
+
+	case 8000:
+	default:
+		ucontrol->value.integer.value[0] = 0;
+		break;
+	}
+#else
 	ucontrol->value.integer.value[0] = msm8226_auxpcm_rate;
+#endif
 	return 0;
 }
 
@@ -772,9 +882,31 @@ static int msm_be_fm_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	return 0;
 }
 
+#if 1	//for force crash from user mode
+static int dummy_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	pr_info("%s: \n", __func__);
+	return 0;
+}
+
+static int dummy_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+
+	pr_info("%s: \n", __func__);
+	panic("force panic for debugging dsp. Contact WX-BSP-Audio@lge.com"); //                                               
+	return 1;
+}
+#endif  		//for force crash from user mode
+
+
 static const struct soc_enum msm_snd_enum[] = {
 	SOC_ENUM_SINGLE_EXT(2, slim0_rx_ch_text),
 	SOC_ENUM_SINGLE_EXT(4, slim0_tx_ch_text),
+#if 1	//for force crash from user mode
+	SOC_ENUM_SINGLE_EXT(8, proxy_rx_ch_text),
+#endif  		//for force crash from user mode
 	SOC_ENUM_SINGLE_EXT(8, proxy_rx_ch_text),
 };
 
@@ -791,6 +923,10 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 			msm_proxy_rx_ch_get, msm_proxy_rx_ch_put),
 	SOC_ENUM_EXT("SLIM_0_RX Format", msm_snd_enum[3],
 			slim0_rx_bit_format_get, slim0_rx_bit_format_put),
+#if 1		//for force crash from user mode
+	SOC_ENUM_EXT("Dummy CTL", msm_snd_enum[4],
+			dummy_get, dummy_put),
+#endif  		//for force crash from user mode
 
 };
 
@@ -1007,7 +1143,7 @@ void *def_tapan_mbhc_cal(void)
 #undef S
 #define S(X, Y) ((WCD9XXX_MBHC_CAL_PLUG_TYPE_PTR(tapan_cal)->X) = (Y))
 	S(v_no_mic, 30);
-	S(v_hs_max, 2450);
+	S(v_hs_max, 2500); //QCT original : S(v_hs_max, 2450); but change this for wrong HTC Innovation EarJack.
 #undef S
 #define S(X, Y) ((WCD9XXX_MBHC_CAL_BTN_DET_PTR(tapan_cal)->X) = (Y))
 	S(c[0], 62);
@@ -1025,22 +1161,43 @@ void *def_tapan_mbhc_cal(void)
 	btn_low = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg, MBHC_BTN_DET_V_BTN_LOW);
 	btn_high = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg,
 					       MBHC_BTN_DET_V_BTN_HIGH);
+
+#if 0 //QCT ORG code
 	btn_low[0] = -50;
-	btn_high[0] = 20;
-	btn_low[1] = 21;
-	btn_high[1] = 61;
-	btn_low[2] = 62;
-	btn_high[2] = 104;
-	btn_low[3] = 105;
-	btn_high[3] = 148;
-	btn_low[4] = 149;
-	btn_high[4] = 189;
-	btn_low[5] = 190;
-	btn_high[5] = 228;
-	btn_low[6] = 229;
-	btn_high[6] = 269;
-	btn_low[7] = 270;
-	btn_high[7] = 500;
+        btn_high[0] = 20;
+        btn_low[1] = 21;
+        btn_high[1] = 61;
+        btn_low[2] = 62;
+        btn_high[2] = 104;
+        btn_low[3] = 105;
+        btn_high[3] = 148;
+        btn_low[4] = 149;
+        btn_high[4] = 189;
+        btn_low[5] = 190;
+        btn_high[5] = 228;
+        btn_low[6] = 229;
+        btn_high[6] = 269;
+        btn_low[7] = 270;
+        btn_high[7] = 500;
+#else
+  btn_low[0] = -50;
+  btn_high[0] = 180; // hook
+  btn_low[1] = 181;
+  btn_high[1] = 200;
+  btn_low[2] = 201;
+  btn_high[2] = 300; // +
+  btn_low[3] = 301;
+  btn_high[3] = 340;
+  btn_low[4] = 341;
+  btn_high[4] = 350;
+  btn_low[5] = 351;
+  btn_high[5] = 380;
+  btn_low[6] = 381;
+  btn_high[6] = 400; // -
+  btn_low[7] = 401;
+  btn_high[7] = 660;
+#endif
+
 	n_ready = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg, MBHC_BTN_DET_N_READY);
 	n_ready[0] = 80;
 	n_ready[1] = 12;
@@ -2087,6 +2244,13 @@ static __devinit int msm8226_asoc_machine_probe(struct platform_device *pdev)
 		goto err;
 	}
 
+#ifdef CONFIG_SND_SPK_BOOST	
+	if(boost_gpio < 0)
+		boost_gpio = of_get_named_gpio(pdev->dev.of_node, "qcom,cdc-boost-spkr-gpios", 0);
+	if(boost_gpio < 0)
+		dev_err(&pdev->dev, "boost gpio error");
+#endif
+
 	pdata->mclk_gpio = of_get_named_gpio(pdev->dev.of_node,
 				"qcom,cdc-mclk-gpios", 0);
 	if (pdata->mclk_gpio < 0) {
@@ -2161,7 +2325,32 @@ static __devinit int msm8226_asoc_machine_probe(struct platform_device *pdev)
 			goto err_vdd_spkr;
 		}
 	}
-
+#ifdef CONFIG_LGE_STEREO_SPEAKER
+	ext_spk_amp_gpio2 = of_get_named_gpio(pdev->dev.of_node,
+			"qcom,cdc-lineout-spkr-gpios2", 0);
+	if (ext_spk_amp_gpio2 < 0) {
+		dev_err(&pdev->dev,
+			"Looking up %s property in node %s failed %d\n",
+			"qcom, cdc-lineout-spkr-gpios",
+			pdev->dev.of_node->full_name, ext_spk_amp_gpio2);
+	} else {
+		ret = gpio_request(ext_spk_amp_gpio2,
+				"TAPAN_CODEC_LINEOUT_SPKR2");
+		if (ret) {
+			/* GPIO to enable EXT AMP exists, but failed request */
+			dev_err(card->dev,
+				"%s: Failed to request tapan amp spkr gpio %d\n",
+				__func__, ext_spk_amp_gpio2);
+			goto err_lineout_spkr;
+		}
+	}
+#endif //                         
+#if defined(CONFIG_MACH_LGE) && defined(CONFIG_SWITCH_MAX1462X) //                                               
+		if(maxim_enabled) {
+			mbhc_cfg.insert_detect = false;
+			pr_info("%s: mbhc disable\n", __func__);
+		}
+#endif
 	msm8226_setup_hs_jack(pdev, pdata);
 
 	ret = of_property_read_string(pdev->dev.of_node,
@@ -2195,7 +2384,12 @@ err_lineout_spkr:
 		gpio_free(ext_spk_amp_gpio);
 		ext_spk_amp_gpio = -1;
 	}
-
+#ifdef CONFIG_LGE_STEREO_SPEAKER
+	if (ext_spk_amp_gpio2 >= 0) {
+		gpio_free(ext_spk_amp_gpio2);
+		ext_spk_amp_gpio2 = -1;
+	}
+#endif //                         
 err_vdd_spkr:
 	if (vdd_spkr_gpio >= 0) {
 		gpio_free(vdd_spkr_gpio);
@@ -2224,11 +2418,19 @@ static int __devexit msm8226_asoc_machine_remove(struct platform_device *pdev)
 		gpio_free(vdd_spkr_gpio);
 	if (ext_spk_amp_gpio >= 0)
 		gpio_free(ext_spk_amp_gpio);
+#ifdef CONFIG_LGE_STEREO_SPEAKER
+	if (ext_spk_amp_gpio2 >= 0)
+		gpio_free(ext_spk_amp_gpio2);
+#endif //                         
 	if (pdata->us_euro_gpio > 0)
 		gpio_free(pdata->us_euro_gpio);
 
+
 	vdd_spkr_gpio = -1;
 	ext_spk_amp_gpio = -1;
+#ifdef CONFIG_LGE_STEREO_SPEAKER
+	ext_spk_amp_gpio2= -1;
+#endif //                         
 	snd_soc_unregister_card(card);
 
 	return 0;

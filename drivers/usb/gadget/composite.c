@@ -21,6 +21,12 @@
 #include <linux/usb/composite.h>
 #include <asm/unaligned.h>
 
+#ifdef CONFIG_LGE_PM_VZW_FAST_CHG
+extern bool usb_connected_flag;
+extern bool usb_configured_flag;
+extern struct delayed_work usb_detect_w;
+extern void set_vzw_usb_charging_state(int state);
+#endif  
 /*
  * The code in this file is utility code, used to build a gadget driver
  * from one or more "function" drivers, one or more "configuration"
@@ -1114,6 +1120,12 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 
 	/* we handle all standard USB descriptors */
 	case USB_REQ_GET_DESCRIPTOR:
+#ifdef CONFIG_LGE_PM_VZW_FAST_CHG
+        if (!usb_connected_flag) {
+            pr_info("%s: [USB_DRV] CONNECTED\n", __func__);
+            usb_connected_flag = true;
+        }
+#endif
 		if (ctrl->bRequestType != USB_DIR_IN)
 			goto unknown;
 		switch (w_value >> 8) {
@@ -1201,6 +1213,14 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 		spin_lock(&cdev->lock);
 		value = set_config(cdev, ctrl, w_value);
 		spin_unlock(&cdev->lock);
+#ifdef CONFIG_LGE_PM_VZW_FAST_CHG
+		if (!usb_configured_flag) {
+			pr_info("%s: [USB_DRV] CONFIGURED\n", __func__);
+			usb_configured_flag = true;
+			__cancel_delayed_work(&usb_detect_w);
+			schedule_delayed_work(&usb_detect_w, 0);
+		}
+#endif
 		break;
 	case USB_REQ_GET_CONFIGURATION:
 		if (ctrl->bRequestType != USB_DIR_IN)

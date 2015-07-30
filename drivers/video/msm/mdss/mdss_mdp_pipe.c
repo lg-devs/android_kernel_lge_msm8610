@@ -55,6 +55,11 @@ static u32 mdss_mdp_smp_mmb_reserve(struct mdss_mdp_pipe_smp_map *smp_map,
 	else
 		n -= fixed_cnt;
 
+	if (n < bitmap_weight(smp_map->allocated, SMP_MB_CNT)) {
+		pr_debug("Can't free extra mmb in set call\n");
+		return 0;
+	}
+
 	/* reserve more blocks if needed, but can't free mmb at this point */
 	for (i = bitmap_weight(smp_map->allocated, SMP_MB_CNT); i < n; i++) {
 		if (bitmap_full(mdata->mmb_alloc_map, SMP_MB_CNT))
@@ -164,7 +169,7 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	u32 num_blks = 0, reserved = 0;
 	struct mdss_mdp_plane_sizes ps;
-	int i;
+	int i, j;
 	int rc = 0, rot_mode = 0;
 	u32 nlines, format;
 	u16 width;
@@ -224,6 +229,14 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 	nlines = pipe->bwc_mode ? 1 : 2;
 
 	mutex_lock(&mdss_mdp_smp_lock);
+	for (j = (MAX_PLANES - 1); j >= ps.num_planes; j--) {
+		if (bitmap_weight(pipe->smp_map[j].allocated, SMP_MB_CNT)) {
+			pr_debug("Extra mmb identified for pnum=%d plane=%d\n", pipe->num, j);
+			mutex_unlock(&mdss_mdp_smp_lock);
+			return -EAGAIN;
+		}
+	}
+
 	for (i = 0; i < ps.num_planes; i++) {
 		if (rot_mode) {
 			num_blks = 1;
@@ -972,7 +985,7 @@ int mdss_mdp_pipe_queue_data(struct mdss_mdp_pipe *pipe,
 			 (pipe->mixer->type == MDSS_MDP_MIXER_TYPE_WRITEBACK)
 			 && (ctl->mdata->mixer_switched)) ||
 			 ctl->roi_changed;
-	if (src_data == NULL || !pipe->has_buf) {
+	if (src_data == NULL || (pipe->flags & MDP_SOLID_FILL)) {
 		pipe->params_changed = 0;
 		mdss_mdp_pipe_solidfill_setup(pipe);
 		goto update_nobuf;
