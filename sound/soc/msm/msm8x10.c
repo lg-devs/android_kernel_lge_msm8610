@@ -614,7 +614,6 @@ static void *def_msm8x10_wcd_mbhc_cal(void)
 	btn_low = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg, MBHC_BTN_DET_V_BTN_LOW);
 	btn_high = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg,
 					       MBHC_BTN_DET_V_BTN_HIGH);
-#if 0	/* Qualcomm ORG. Button range */
 	btn_low[0] = -50;
 	btn_high[0] = 20;
 	btn_low[1] = 21;

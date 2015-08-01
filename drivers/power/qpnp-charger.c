@@ -571,8 +571,10 @@ struct qpnp_chg_chip {
 #endif
 };
 
+#ifndef CONFIG_LGE_PM
 static void
 qpnp_chg_set_appropriate_battery_current(struct qpnp_chg_chip *chip);
+#endif
 
 static struct of_device_id qpnp_charger_match_table[] = {
 	{ .compatible = QPNP_CHARGER_DEV_NAME, },
@@ -2289,7 +2291,6 @@ qpnp_chg_bat_if_batt_temp_irq_handler(int irq, void *_chip)
 	power_supply_changed(&chip->batt_psy);
 	return IRQ_HANDLED;
 }
-#endif
 static irqreturn_t
 qpnp_chg_bat_if_batt_pres_irq_handler(int irq, void *_chip)
 {
@@ -2361,6 +2362,7 @@ qpnp_chg_bat_if_batt_pres_irq_handler(int irq, void *_chip)
 
 	return IRQ_HANDLED;
 }
+#endif
 
 static irqreturn_t
 qpnp_chg_dc_dcin_valid_irq_handler(int irq, void *_chip)
@@ -2589,8 +2591,6 @@ qpnp_chg_chgr_chg_fastchg_irq_handler(int irq, void *_chip)
 			if (!chip->bat_is_warm && !chip->bat_is_cool)
 				bypass_vbatdet_comp(chip, 0);
 		}
-	}
-
 #ifdef CONFIG_LGE_PM_4_25V_CHARGING_START
 	if(chip->from_temp_monitor_vbat_det_high == true)
 	{
@@ -2598,25 +2598,9 @@ qpnp_chg_chgr_chg_fastchg_irq_handler(int irq, void *_chip)
 		chip->from_temp_monitor_vbat_det_high = false;
 	}
 #endif
+	}
 
 	qpnp_chg_enable_irq(&chip->chg_vbatdet_lo);
-	if (chgr_sts & FAST_CHG_ON_IRQ) {
-#ifdef CONFIG_LGE_PM_CHARGING_EXTERNAL_OVP
-		pr_debug("======= [FAST CHG IRQ] DCP = %d, SDP = %d ========\n", chip->ac_online, qpnp_chg_is_usb_chg_plugged_in(chip));
-		// DCP Cable
-		if (chip->ac_online && qpnp_chg_is_usb_chg_plugged_in(chip)) 
-		{
-			pr_debug("======= [FAST CHG IRQ] DCP CABLE - Ext. OVP is HIGH =============\n");
-			lge_set_chg_path_to_external();
-		}
-		// SDP Cable
-		else if (!chip->ac_online && qpnp_chg_is_usb_chg_plugged_in(chip)) 
-		{
-			pr_debug("======= [FAST CHG IRQ] SDP CABLE - Ext. OVP is LOW =============\n");
-			lge_set_chg_path_to_internal();
-		}
-#endif	
-	}
 
 	return IRQ_HANDLED;
 }
@@ -3178,28 +3162,7 @@ get_prop_batt_status(struct qpnp_chg_chip *chip)
 {
 	int rc;
 	u8 chgr_sts, bat_if_sts;
-#ifdef CONFIG_LGE_WIRELESS_CHARGER_RT9536
-	union power_supply_propval ret = {0,};
-	int wlc_status = POWER_SUPPLY_STATUS_UNKNOWN;
-//	int wlc_online = 0;
-//	printk("[WLC] %s: chg_type is %d\n",__func__,chg_type);
-#endif
 
-#ifdef CONFIG_LGE_WIRELESS_CHARGER_RT9536
-	if (chip->wireless== NULL)
-		chip->wireless = power_supply_get_by_name("wireless");
-	if (chip->wireless!=NULL){
-		/* if wireless charger has been registered, use the present property */
-		chip->wireless->get_property(chip->wireless,
-					POWER_SUPPLY_PROP_STATUS, &ret);
-		wlc_status = ret.intval;
-	}
-	if(wlc_status==POWER_SUPPLY_STATUS_FULL)
-	{
-//		printk("[WLC] %s: WLC Battery Full!!!\n",__func__);
-		return POWER_SUPPLY_STATUS_FULL;
-	}
-#endif
 	rc = qpnp_chg_read(chip, &chgr_sts, INT_RT_STS(chip->chgr_base), 1);
 	if (rc) {
 		pr_err("failed to read interrupt sts %d\n", rc);
@@ -3210,37 +3173,6 @@ get_prop_batt_status(struct qpnp_chg_chip *chip)
 	if (rc) {
 		pr_err("failed to read bat_if sts %d\n", rc);
 		return POWER_SUPPLY_CHARGE_TYPE_NONE;
-	}
-#ifdef CONFIG_LGE_PM_CHARGING_TEMP_SCENARIO
-	if (qpnp_chg_is_usb_chg_plugged_in(chip)){
-		if (chip->pseudo_ui_chg)
-			return POWER_SUPPLY_STATUS_CHARGING;
-		else if (chip->not_chg == CHG_BATT_STPCHG_STATE)
-			return POWER_SUPPLY_STATUS_NOT_CHARGING;
-	}
-#endif
-#ifdef CONFIG_LGE_WIRELESS_CHARGER_RT9536
-	if (chg_type == POWER_SUPPLY_CHARGE_TYPE_WIRELESS)
-	{
-//		printk("[WLC] %s: WLC Battery Charging!!!\n",__func__);
-		return POWER_SUPPLY_STATUS_CHARGING;
-	}
-#endif
-	if (chg_type == POWER_SUPPLY_CHARGE_TYPE_UNKNOWN ||
-		chg_type == POWER_SUPPLY_CHARGE_TYPE_NONE) {
-#ifdef CONFIG_LGE_PM_VZW_FAST_CHG
-		if ((chip->usb_present) || (chg_state == VZW_NOT_CHARGING)
-				|| (chg_state == VZW_USB_DRIVER_UNINSTALLED)){
-#else
-		if (chip->usb_present){
-
-#endif
-			return POWER_SUPPLY_STATUS_NOT_CHARGING;
-		}
-		else {
-			return POWER_SUPPLY_STATUS_DISCHARGING;
-		}
-
 	}
 
 	if ((chgr_sts & TRKL_CHG_ON_IRQ) && !(bat_if_sts & BAT_FET_ON_IRQ))
@@ -4306,6 +4238,7 @@ static int qpnp_chg_tchg_max_set(struct qpnp_chg_chip *chip, int minutes)
 	return 0;
 }
 
+#ifndef CONFIG_LGE_PM
 static void
 qpnp_chg_set_appropriate_battery_current(struct qpnp_chg_chip *chip)
 {
@@ -4324,6 +4257,7 @@ qpnp_chg_set_appropriate_battery_current(struct qpnp_chg_chip *chip)
 	pr_debug("setting %d mA\n", chg_current);
 	qpnp_chg_ibatmax_set(chip, chg_current);
 }
+#endif
 
 static int
 qpnp_chg_vddsafe_set(struct qpnp_chg_chip *chip, int voltage)
@@ -5878,6 +5812,8 @@ qpnp_chg_request_irqs(struct qpnp_chg_chip *chip)
 				pr_err("Unable to get batt-pres irq\n");
 				return rc;
 			}
+/*#ifndef CONFIG_MACH_MSM8X10_W3_GLOBAL_COM */
+#if !defined(CONFIG_MACH_MSM8X10_W3_GLOBAL_COM) && !defined(CONFIG_MACH_MSM8X10_W3DS_GLOBAL_COM) && !defined(CONFIG_MACH_MSM8X10_W5C_VZW)
 			rc = devm_request_irq(chip->dev, chip->batt_pres.irq,
 				qpnp_chg_bat_if_batt_pres_irq_handler,
 				IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING
@@ -5891,8 +5827,6 @@ qpnp_chg_request_irqs(struct qpnp_chg_chip *chip)
 
 			qpnp_chg_irq_wake_enable(&chip->batt_pres);
 
-/*#ifndef CONFIG_MACH_MSM8X10_W3_GLOBAL_COM */
-#if !defined(CONFIG_MACH_MSM8X10_W3_GLOBAL_COM) && !defined(CONFIG_MACH_MSM8X10_W3DS_GLOBAL_COM) && !defined(CONFIG_MACH_MSM8X10_W5C_VZW)
 			chip->batt_temp_ok.irq = spmi_get_irq_byname(spmi,
 						spmi_resource, "bat-temp-ok");
 			if (chip->batt_temp_ok.irq < 0) {

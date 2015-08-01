@@ -260,41 +260,6 @@ static int mdm_ssr_notify_cb(struct notifier_block *n, unsigned long code,
 	return NOTIFY_DONE;
 }
 
-static int mdm_ssr_notify_cb(struct notifier_block *n, unsigned long code,
-				void *_cmd)
-{
-	struct msm_slim_mdm *mdm = container_of(n, struct msm_slim_mdm, nb);
-	struct msm_slim_ctrl *dev = container_of(mdm, struct msm_slim_ctrl,
-						mdm);
-	int ret;
-
-	switch (code) {
-	case SUBSYS_BEFORE_SHUTDOWN:
-		/* make sure runtime-pm doesn't suspend during modem SSR */
-		pm_runtime_get_noresume(dev->dev);
-		break;
-	case SUBSYS_AFTER_POWERUP:
-		ret = msm_slim_qmi_check_framer_request(dev);
-		dev_err(dev->dev,
-			"%s:SLIM %lu external_modem SSR notify cb, ret %d",
-			__func__, code, ret);
-		/*
-		 * Next codec transaction will reinit the HW
-		 * if it was suspended
-		 */
-		if (pm_runtime_suspended(dev->dev) ||
-			dev->state >= MSM_CTRL_ASLEEP) {
-			break;
-		} else {
-			ngd_slim_power_up(dev);
-			msm_slim_put_ctrl(dev);
-		}
-	default:
-		break;
-	}
-	return NOTIFY_DONE;
-}
-
 static int ngd_get_tid(struct slim_controller *ctrl, struct slim_msg_txn *txn,
 				u8 *tid, struct completion *done)
 {
@@ -427,7 +392,7 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 				return -EREMOTEIO;
 			timeout = wait_for_completion_timeout(&dev->ctrl_up,
 							HZ);
-			if (!timeout && dev->state == MSM_CTRL_DOWN)
+			if (!timeout)
 				return -ETIMEDOUT;
 			mutex_lock(&dev->tx_lock);
 		}
@@ -665,8 +630,6 @@ ngd_xfer_err:
 	return ret ? ret : dev->err;
 }
 
-static int lg_cnt = 0;
-
 static int ngd_user_msg(struct slim_controller *ctrl, u8 la, u8 mt, u8 mc,
 				struct slim_ele_access *msg, u8 *buf, u8 len)
 {
@@ -705,7 +668,7 @@ static int ngd_user_msg(struct slim_controller *ctrl, u8 la, u8 mt, u8 mc,
 	return ngd_xfer_msg(ctrl, &txn);
 }
 
->>>>>>> LA.BF.1.1.2-03510-8x10.0
+static int lg_cnt = 0;
 static int ngd_xferandwait_ack(struct slim_controller *ctrl,
 				struct slim_msg_txn *txn)
 {
@@ -714,13 +677,12 @@ static int ngd_xferandwait_ack(struct slim_controller *ctrl,
 	if (!ret) {
 		int timeout;
 		timeout = wait_for_completion_timeout(txn->comp, HZ);
-		if (!timeout){
+		if (!timeout) {
 			ret = -ETIMEDOUT;
 			lg_cnt++ ;
-		}
-		else{
+		} else {
 			ret = txn->ec;
-			lg_cnt =0 ;
+			lg_cnt = 0;
 		}
 	}
 
@@ -728,7 +690,7 @@ static int ngd_xferandwait_ack(struct slim_controller *ctrl,
 		if (ret != -EREMOTEIO || txn->mc != SLIM_USR_MC_CHAN_CTRL)
 			SLIM_ERR(dev, "master msg:0x%x,tid:%d ret:%d\n",
 				txn->mc, txn->tid, ret);
-		if(lg_cnt>3)
+		if (lg_cnt > 3)
 			panic("ngd_panic.4_ps2");
 		mutex_lock(&ctrl->m_ctrl);
 		ctrl->txnt[txn->tid] = NULL;

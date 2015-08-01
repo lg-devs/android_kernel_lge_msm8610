@@ -198,7 +198,6 @@ static int cpu_hotplug_handler(struct notifier_block *nb,
 {
 	unsigned int cpu = (unsigned long)data;
 	struct cpu_load_data *this_cpu = &per_cpu(cpuload, cpu);
-	struct clk *cpu_clk = per_cpu(rq_cpu_clks, cpu);
 
 	switch (val) {
 	case CPU_ONLINE:

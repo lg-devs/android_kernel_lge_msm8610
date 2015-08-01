@@ -70,9 +70,11 @@ static struct wake_lock ear_hook_wake_lock;
 #define STATUS_REL_DETECTION 0x0C
 
 #if 0 //QCT ORG code 
+#define HS_DETECT_PLUG_TIME_MS (5 * 1000)
 #define ANC_HPH_DETECT_PLUG_TIME_MS (5 * 1000)
 #else //                                                
 #define ANC_HPH_DETECT_PLUG_TIME_MS (3 * 1000)
+#define HS_DETECT_PLUG_TIME_MS (3 * 1000)
 #endif
 
 #define HS_DETECT_PLUG_INERVAL_MS 100

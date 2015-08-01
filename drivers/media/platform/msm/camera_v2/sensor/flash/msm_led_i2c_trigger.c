@@ -296,10 +296,6 @@ int msm_flash_led_low(struct msm_led_flash_ctrl_t *fctrl)
 	struct msm_camera_sensor_board_info *flashdata = NULL;
 	struct msm_camera_power_ctrl_t *power_info = NULL;
 	CDBG("%s:%d called\n", __func__, __LINE__);
-/*                                                                               */
-	CDBG("%s:%d called\n", __func__, __LINE__);
-
-/*                                                              */
     if(fctrl == NULL) {
         pr_err("%s:%d fctrl\n", __func__, __LINE__);
 		return -EINVAL;
