@@ -87,6 +87,7 @@ synaptics_fw_files := $(foreach var, $(synaptics_fw_list), synaptics/x3n_kr/$(va
 endif
 # LGE_CHANGE - END
 fw-shipped-$(CONFIG_LGE_TOUCH_SYNAPTICS) += $(synaptics_fw_files)
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE) += $(synaptics_fw_files)
 
 fw-shipped-$(CONFIG_3C359) += 3com/3C359.bin
 fw-shipped-$(CONFIG_ACENIC) += $(acenic-objs)
